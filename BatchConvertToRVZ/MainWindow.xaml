@@ -17,7 +17,7 @@
             <RowDefinition Height="Auto"/> <!-- ProgressBar Grid -->
         </Grid.RowDefinitions>
 
-        <!-- Menu Bar (Keep the same structure) -->
+        <!-- Menu Bar -->
         <Menu Grid.Row="0">
             <MenuItem Header="File">
                 <MenuItem Header="Exit" Click="ExitMenuItem_Click">
@@ -35,7 +35,7 @@
             </MenuItem>
         </Menu>
 
-        <!-- Input Folder Selection (Keep the same structure) -->
+        <!-- Input Folder Selection -->
         <Grid Grid.Row="1" Margin="10,10,10,5">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="100"/>
@@ -47,7 +47,7 @@
             <Button x:Name="BrowseInputButton" Grid.Column="2" Content="Browse" Click="BrowseInputButton_Click" Padding="10,5"/>
         </Grid>
 
-        <!-- Output Folder Selection (Keep the same structure) -->
+        <!-- Output Folder Selection -->
         <Grid Grid.Row="2" Margin="10,5,10,5">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="100"/>
@@ -59,14 +59,14 @@
             <Button x:Name="BrowseOutputButton" Grid.Column="2" Content="Browse" Click="BrowseOutputButton_Click" Padding="10,5"/>
         </Grid>
 
-        <!-- Delete Files Checkbox (Keep the same structure) -->
+        <!-- Delete Files Checkbox -->
         <CheckBox x:Name="DeleteFilesCheckBox"
                   Grid.Row="3"
                   Content="Delete original files after conversion"
                   Margin="10,5,10,5"
                   HorizontalAlignment="Left"/>
 
-        <!-- Parallel Processing Checkbox (Keep the same structure) -->
+        <!-- Parallel Processing Checkbox -->
         <CheckBox x:Name="ParallelProcessingCheckBox"
                   Grid.Row="4"
                   Content="Enable parallel processing (multiple files at once)"
@@ -74,7 +74,7 @@
                   HorizontalAlignment="Left"
                   IsChecked="False"/>
 
-        <!-- Start Conversion Button (Keep the same structure) -->
+        <!-- Start Conversion Button -->
         <Button x:Name="StartButton"
                 Grid.Row="5"
                 Content="Start Conversion"
@@ -84,7 +84,7 @@
                 HorizontalAlignment="Center"
                 FontWeight="Bold"/>
 
-        <!-- Log TextBox (Keep the same structure) -->
+        <!-- Log TextBox -->
         <TextBox x:Name="LogViewer"
                  Grid.Row="6"
                  AcceptsReturn="True"
@@ -93,13 +93,13 @@
                  Margin="10,0,10,0"
                  FontFamily="Consolas"/>
 
-        <!-- Progress Text (Keep the same structure) -->
+        <!-- Progress Text -->
         <TextBlock x:Name="ProgressText"
                   Grid.Row="7"
                   Margin="10,5,10,2"
                   Visibility="Collapsed"/>
 
-        <!-- Progress Bar (Keep the same structure) -->
+        <!-- Progress Bar -->
         <Grid Grid.Row="8" Margin="10,2,10,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>

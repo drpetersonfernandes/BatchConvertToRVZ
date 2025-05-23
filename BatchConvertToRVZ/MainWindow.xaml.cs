@@ -19,10 +19,6 @@ public partial class MainWindow : IDisposable
     private const string BugReportApiKey = "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e";
     private const string ApplicationName = "BatchConvertToRVZ"; // Changed application name
 
-    // Removed 7z constants and fields
-    // Removed Separator
-
-    // Only support .iso for RVZ conversion
     private static readonly string[] SupportedInputExtensions = { ".iso" };
 
     private int _currentDegreeOfParallelismForFiles = 1;
@@ -66,28 +62,12 @@ public partial class MainWindow : IDisposable
             LogMessage($"Please ensure {DolphinToolExeName} is in the same folder as this application.");
             Task.Run(async () => await ReportBugAsync($"{DolphinToolExeName} not found in the application directory. This will prevent the application from functioning correctly."));
         }
-
-        // Removed 7z check
     }
 
     private void Window_Closing(object sender, CancelEventArgs e)
     {
-        // Signal cancellation to any ongoing background tasks
         _cts.Cancel();
-
-        // Allow the window to close normally.
-        // WPF will handle the rest of the shutdown process,
-        // including disposing of window resources.
-        // The Dispose method on MainWindow will be called by the framework
-        // when the window's HwndSource is disposed during shutdown.
-
-        // Do NOT call Environment.Exit() or Application.Current.Shutdown() here.
-        // Letting the window close naturally triggers the application shutdown.
-        // e.Cancel is false by default, so we don't need to set it unless we
-        // previously set it to true and wanted to revert. In this case, we remove
-        // the line that set it to true and the delayed exit logic.
     }
-
 
     private void LogMessage(string message)
     {
@@ -176,7 +156,6 @@ public partial class MainWindow : IDisposable
                 return;
             }
 
-
             if (_cts.IsCancellationRequested)
             {
                 _cts.Dispose();
@@ -193,7 +172,6 @@ public partial class MainWindow : IDisposable
             LogMessage($"Delete original files: {deleteFiles}");
             LogMessage($"Parallel file processing: {useParallelFileProcessing} (Max concurrency: {_currentDegreeOfParallelismForFiles})");
             LogMessage($"RVZ Compression: Method={RvzCompressionMethod}, Level={RvzCompressionLevel}, Block Size={RvzBlockSize}");
-
 
             try
             {
@@ -280,8 +258,6 @@ public partial class MainWindow : IDisposable
             var failureCount = 0;
             var filesProcessedCount = 0;
 
-            // Removed coresPerConversion logic as DolphinTool command doesn't use -np
-
             if (useParallelFileProcessing && files.Length > 1)
             {
                 // Use Parallel.ForEachAsync with limited concurrency
@@ -296,7 +272,7 @@ public partial class MainWindow : IDisposable
                     var fileName = Path.GetFileName(inputFile);
                     LogMessage($"[Parallel] Starting: {fileName}");
 
-                    var success = await ProcessFileAsync(dolphinToolPath, inputFile, outputFolder, deleteFiles); // Removed cores parameter
+                    var success = await ProcessFileAsync(dolphinToolPath, inputFile, outputFolder, deleteFiles);
 
                     if (success)
                     {
@@ -338,7 +314,7 @@ public partial class MainWindow : IDisposable
 
                     LogMessage($"[Sequential] Processing: {fileName}");
 
-                    var success = await ProcessFileAsync(dolphinToolPath, t, outputFolder, deleteFiles); // Removed cores parameter
+                    var success = await ProcessFileAsync(dolphinToolPath, t, outputFolder, deleteFiles);
 
                     if (success)
                     {
@@ -385,7 +361,6 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    // Simplified ProcessFileAsync - no archive handling
     private async Task<bool> ProcessFileAsync(string dolphinToolPath, string inputFile, string outputFolder, bool deleteOriginal)
     {
         try
@@ -399,7 +374,7 @@ public partial class MainWindow : IDisposable
                 return true; // Consider existing file as successful conversion for this run
             }
 
-            var success = await ConvertToRvzAsync(dolphinToolPath, inputFile, outputFile); // Renamed and simplified call
+            var success = await ConvertToRvzAsync(dolphinToolPath, inputFile, outputFile);
 
             if (success && deleteOriginal)
             {
@@ -435,7 +410,6 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    // New conversion method for DolphinTool
     private async Task<bool> ConvertToRvzAsync(string dolphinToolPath, string inputFile, string outputFile)
     {
         try
@@ -523,7 +497,6 @@ public partial class MainWindow : IDisposable
         }
     }
 
-
     private void TryDeleteFile(string filePath, string description)
     {
         try
@@ -548,17 +521,11 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    // Removed TryDeleteDirectory as archive extraction is removed
-
-    // Simplified DeleteOriginalFilesAsync - only deletes the input file
     private async Task DeleteOriginalFilesAsync(string inputFile)
     {
-        // No need to parse CUE/GDI for ISO
         TryDeleteFile(inputFile, "original ISO file");
-        await Task.CompletedTask; // Keep async signature if needed elsewhere, but no await here
+        await Task.CompletedTask;
     }
-
-    // Removed GetReferencedFilesFromCue and GetReferencedFilesFromGdi methods
 
     private void ShowMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
     {
@@ -668,8 +635,6 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    // Removed generated regex methods as we are using System.Text.RegularExpressions.Regex
-
     private void ExitMenuItem_Click(object sender, RoutedEventArgs e)
     {
         Close();
@@ -690,13 +655,12 @@ public partial class MainWindow : IDisposable
 
     private void ClearProgressDisplay()
     {
-        // Ensure this runs on the UI thread
         Application.Current.Dispatcher.Invoke(() =>
         {
             ProgressBar.Visibility = Visibility.Collapsed;
             ProgressText.Text = string.Empty;
             ProgressText.Visibility = Visibility.Collapsed;
-            ProgressBar.Value = 0; // Reset progress bar value
+            ProgressBar.Value = 0;
         });
     }
 
