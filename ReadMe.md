@@ -8,27 +8,31 @@ A Windows desktop utility for batch converting GameCube and Wii ISO images to RV
 
 Batch Convert to RVZ is a Windows application that provides a simple user interface for converting multiple GameCube and Wii ISO files to the RVZ format.
 It uses **DolphinTool.exe** from the Dolphin Emulator project for the actual conversions, while providing a user-friendly interface for batch processing.
-It allows parallel conversion for improved performance.
+**It also supports extracting ISO images from archives** and allows parallel conversion for improved performance.
 
 ## Features
 
 - **Batch Processing**: Convert multiple files in a single operation.
-- **Supported Format**: Specifically handles GameCube and Wii ISO files (`.iso`).
+- **Supported Formats**: Handles GameCube and Wii ISO files (`.iso`) **and archives containing them**.
+- **Archive Support**: Automatically extracts and processes supported `.iso` files from `.zip`, `.7z`, and `.rar` archives.
+- **7-Zip Integration**: Uses `7z.exe` for `.7z` and `.rar` extraction, included with the application.
 - **Parallel Processing**: Optionally process multiple files in parallel to speed up batch completion.
 - **Progress Tracking**: Detailed progress indication and real-time logging during the conversion process.
-- **Delete Original Option**: Option to remove source `.iso` files after successful conversion.
+- **Delete Original Option**: Option to remove source files (**including archives**) after successful conversion.
 - **Global Error Reporting**: Automatic bug reporting to the developer with comprehensive error details.
 - **User-Friendly Interface**: Simple and intuitive Windows interface.
 
 ## Supported File Formats
 
 - **ISO files** (GameCube and Wii images, `.iso`)
+- **ZIP, 7Z, RAR archives** (containing `.iso` files)
 
 ## Requirements
 
 - Windows 7 or later
 - [.NET 9.0 Runtime](https://dotnet.microsoft.com/download/dotnet/9.0)
 - `DolphinTool.exe` (included with the application)
+- `7z.exe` and optionally `7z.dll` for archive extraction (included with the application)
 
 ## Installation
 
@@ -38,9 +42,9 @@ It allows parallel conversion for improved performance.
 
 ## Usage
 
-1. **Select Input Folder**: Click "Browse" next to "Input Folder" to select the folder containing `.iso` files to convert.
+1. **Select Input Folder**: Click "Browse" next to "Input Folder" to select the folder containing `.iso` files **or archives** to convert.
 2. **Select Output Folder**: Click "Browse" next to "Output Folder" to choose where the RVZ files will be saved.
-3. **Delete Option**: Check "Delete original files after conversion" if you want to remove source `.iso` files after successful conversion.
+3. **Delete Option**: Check "Delete original files after conversion" if you want to remove source files (**including archives**) after successful conversion.
 4. **Parallel Processing Option**: Check "Enable parallel processing" to convert multiple files concurrently for faster batch completion.
 5. **Start Conversion**: Click "Start Conversion" to begin the batch process.
 6. **Monitor Progress**: The application displays progress bars and detailed log messages for each file during conversion.
@@ -64,14 +68,16 @@ RVZ is a compressed disk image format developed specifically for the Dolphin Emu
 
 ## Troubleshooting
 
-- Ensure `DolphinTool.exe` is present in the same directory as the application.
+- Ensure `DolphinTool.exe` **and `7z.exe`** are present in the same directory as the application.
 - Make sure you have appropriate permissions to read from the input and write to the output directories.
+- If `.7z` or `.rar` extraction is failing, verify that `7z.exe` is not missing.
 - Review the application log window for detailed error messages during conversion.
 - Automatic error reports will be sent to the developer if unexpected issues occur.
 
 ## Acknowledgements
 
 - Uses **DolphinTool.exe** from the [Dolphin Emulator project](https://dolphin-emu.org/) for RVZ file conversions.
+- Uses **7-Zip** (`7z.exe`) for extracting `.7z` and `.rar` archives.
 - Developed by [Pure Logic Code](https://www.purelogiccode.com).
 
 ---
