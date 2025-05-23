@@ -1,12 +1,51 @@
 <Window x:Class="BatchConvertToRVZ.AboutWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:local="clr-namespace:BatchConvertToRVZ"
-        mc:Ignorable="d"
-        Title="AboutWindow" Height="450" Width="800">
+        Title="About Batch Convert to RVZ"
+        Width="450"
+        Height="440"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
     <Grid>
-        
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel
+            Grid.Row="0"
+            Margin="10"
+            HorizontalAlignment="Center"
+            Orientation="Horizontal">
+            <Image
+                Width="128"
+                Height="128"
+                Source="pack://application:,,,/images/logo.png" /> <!-- Reuse logo or replace -->
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="20">
+            <TextBlock FontWeight="Bold" FontSize="18" Text="Batch Convert to RVZ" /> <!-- Changed Text -->
+            <TextBlock Text="A utility for batch converting GameCube/Wii ISO images to RVZ format" Margin="0,5,0,0" /> <!-- Changed Description -->
+            <TextBlock Name="AppVersionTextBlock" Margin="0,10,0,0" Text="" />
+            <TextBlock Margin="0,20,0,0" Text="Uses DolphinTool.exe from the Dolphin Emulator project for conversions." /> <!-- Changed Tool Text -->
+            <!-- Removed 7-Zip line -->
+            <TextBlock Margin="0,10,0,0">
+                <Hyperlink NavigateUri="https://www.purelogiccode.com" RequestNavigate="Hyperlink_RequestNavigate">https://www.purelogiccode.com</Hyperlink>
+            </TextBlock>
+            <TextBlock Margin="0,10,0,0" Text="© 2025 Pure Logic Code. All rights reserved." /> <!-- Keep or update year -->
+        </StackPanel>
+
+        <StackPanel
+            Grid.Row="2"
+            Margin="10"
+            HorizontalAlignment="Center"
+            Orientation="Horizontal">
+            <Button
+                Width="100"
+                Margin="10,0,0,0"
+                Click="CloseButton_Click"
+                Content="Close" />
+        </StackPanel>
     </Grid>
 </Window>
