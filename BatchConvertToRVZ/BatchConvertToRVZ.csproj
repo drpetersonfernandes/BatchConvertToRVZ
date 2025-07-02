@@ -32,10 +32,11 @@
     <None Update="7z.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="7z.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
     <!-- Removed chdman.exe and 7z files -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Squid-Box.SevenZipSharp" Version="1.6.2.24" />
   </ItemGroup>
 
 </Project>

@@ -7,6 +7,7 @@ using System.Text;
 using System.Windows;
 using Microsoft.Win32;
 using System.Text.RegularExpressions;
+using SevenZip;
 
 namespace BatchConvertToRVZ;
 
@@ -28,10 +29,8 @@ public partial class MainWindow : IDisposable
     private const int RvzCompressionLevel = 5; // Default compression level
     private const int RvzBlockSize = 131072; // Default block size
 
-    // 7z specific constants and fields (Re-added)
-    private const string SevenZipExeName = "7z.exe";
-    private readonly string _sevenZipPath;
-    private readonly bool _isSevenZipAvailable;
+    // 7z specific constants and fields
+    private readonly bool _isSevenZipDllAvailable;
 
     // Supported input extensions (Updated to include archives)
     private static readonly string[] AllSupportedInputExtensions = { ".iso", ".zip", ".7z", ".rar" };
@@ -40,6 +39,18 @@ public partial class MainWindow : IDisposable
 
     // Primary target extension inside archives for RVZ conversion
     private static readonly string[] PrimaryTargetExtensionsInsideArchive = { ".iso" };
+
+    // Supported extension for verification
+    private static readonly string[] RvzExtension = { ".rvz" };
+
+    // Statistics
+    private int _totalFilesToProcess;
+    private int _successCount;
+    private int _failureCount;
+    private readonly Stopwatch _operationTimer = new();
+
+    // For Write Speed Calculation
+    private const int WriteSpeedUpdateIntervalMs = 1000;
 
 
     public MainWindow()
@@ -55,12 +66,8 @@ public partial class MainWindow : IDisposable
         LogMessage("This program will convert GameCube/Wii ISO files (.iso) to RVZ format.");
         LogMessage("It also supports extracting ISOs from ZIP, 7Z, and RAR archives."); // Updated welcome message
         LogMessage("");
-        LogMessage("Please follow these steps:");
-        LogMessage("1. Select the input folder containing ISO files or archives to convert"); // Updated step 1
-        LogMessage("2. Select the output folder where RVZ files will be saved");
-        LogMessage("3. Choose whether to delete original files after conversion");
-        LogMessage("4. Optionally, enable parallel processing for faster conversion of multiple files");
-        LogMessage("5. Click 'Start Conversion' to begin the process");
+        LogMessage("Use the 'Convert' tab to convert ISO files or archives to RVZ.");
+        LogMessage("Use the 'Verify Integrity' tab to check your existing RVZ files.");
         LogMessage("");
 
         var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
@@ -78,18 +85,21 @@ public partial class MainWindow : IDisposable
             Task.Run(() => ReportBugAsync($"{DolphinToolExeName} not found in the application directory. This will prevent the application from functioning correctly."));
         }
 
-        // Re-add 7z check
-        _sevenZipPath = Path.Combine(appDirectory, SevenZipExeName);
-        if (File.Exists(_sevenZipPath))
+        // 7z.dll check and library path setup
+        var sevenZipDllPath = Path.Combine(appDirectory, "7z.dll");
+        if (File.Exists(sevenZipDllPath))
         {
-            _isSevenZipAvailable = true;
-            LogMessage($"{SevenZipExeName} found. .7z and .rar extraction enabled.");
+            SevenZipBase.SetLibraryPath(sevenZipDllPath);
+            _isSevenZipDllAvailable = true;
+            LogMessage("7z.dll found. .7z and .rar extraction enabled via SevenZipSharp library.");
         }
         else
         {
-            _isSevenZipAvailable = false;
-            LogMessage($"WARNING: {SevenZipExeName} not found. .7z and .rar extraction will be disabled.");
+            _isSevenZipDllAvailable = false;
+            LogMessage("WARNING: 7z.dll not found. .7z and .rar extraction will be disabled.");
         }
+
+        ResetOperationStats();
     }
 
     private void Window_Closing(object sender, CancelEventArgs e)
@@ -135,7 +145,7 @@ public partial class MainWindow : IDisposable
         LogMessage($"Output folder selected: {outputFolder}");
     }
 
-    private async void StartButton_Click(object sender, RoutedEventArgs e)
+    private async void StartConversionButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
@@ -198,8 +208,9 @@ public partial class MainWindow : IDisposable
                 _cts = new CancellationTokenSource();
             }
 
-            ClearProgressDisplay();
+            ResetOperationStats();
             SetControlsState(false);
+            _operationTimer.Restart();
 
             LogMessage("Starting batch conversion process...");
             LogMessage($"Using {DolphinToolExeName}: {dolphinToolPath}");
@@ -224,12 +235,16 @@ public partial class MainWindow : IDisposable
             }
             finally
             {
+                _operationTimer.Stop();
+                UpdateProcessingTimeDisplay();
+                UpdateWriteSpeedDisplay(0);
                 SetControlsState(true);
+                LogOperationSummary("Conversion");
             }
         }
         catch (Exception ex)
         {
-            await ReportBugAsync("Error during StartButton_Click", ex);
+            await ReportBugAsync("Error during StartConversionButton_Click", ex);
         }
     }
 
@@ -241,23 +256,33 @@ public partial class MainWindow : IDisposable
 
     private void SetControlsState(bool enabled)
     {
+        // Disable/enable the whole tab control to prevent switching
+        MainTabControl.IsEnabled = enabled;
+
+        // Convert Tab Controls
         InputFolderTextBox.IsEnabled = enabled;
         OutputFolderTextBox.IsEnabled = enabled;
         BrowseInputButton.IsEnabled = enabled;
         BrowseOutputButton.IsEnabled = enabled;
         DeleteFilesCheckBox.IsEnabled = enabled;
         ParallelProcessingCheckBox.IsEnabled = enabled;
-        StartButton.IsEnabled = enabled;
+        StartConversionButton.IsEnabled = enabled;
+
+        // Verify Tab Controls
+        VerifyFolderTextBox.IsEnabled = enabled;
+        BrowseVerifyFolderButton.IsEnabled = enabled;
+        VerifyParallelProcessingCheckBox.IsEnabled = enabled;
+        StartVerifyButton.IsEnabled = enabled;
 
         // Progress controls visibility is the inverse of enabled state
         ProgressBar.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         CancelButton.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         ProgressText.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
 
-        if (enabled)
-        {
-            ClearProgressDisplay();
-        }
+        if (!enabled) return;
+
+        ClearProgressDisplay();
+        UpdateWriteSpeedDisplay(0);
     }
 
     private static string? SelectFolder(string description)
@@ -280,18 +305,15 @@ public partial class MainWindow : IDisposable
                 .Where(file => AllSupportedInputExtensions.Contains(Path.GetExtension(file).ToLowerInvariant()))
                 .ToArray();
 
-            LogMessage($"Found {files.Length} files to process.");
-            if (files.Length == 0)
+            _totalFilesToProcess = files.Length;
+            UpdateStatsDisplay();
+            LogMessage($"Found {_totalFilesToProcess} files to process.");
+            if (_totalFilesToProcess == 0)
             {
                 LogMessage("No supported files (.iso, .zip, .7z, .rar) found in the input folder."); // Updated message
                 return;
             }
 
-            ProgressBar.Maximum = files.Length;
-            ProgressBar.Value = 0;
-
-            var successCount = 0;
-            var failureCount = 0;
             var filesProcessedCount = 0;
 
             if (useParallelFileProcessing && files.Length > 1)
@@ -311,25 +333,19 @@ public partial class MainWindow : IDisposable
 
                     if (success)
                     {
-                        Interlocked.Increment(ref successCount);
+                        Interlocked.Increment(ref _successCount);
                         LogMessage($"[Parallel] Successful: {fileName}");
                     }
                     else
                     {
-                        Interlocked.Increment(ref failureCount);
+                        Interlocked.Increment(ref _failureCount);
                         LogMessage($"[Parallel] Failed: {fileName}");
                     }
 
                     var processed = Interlocked.Increment(ref filesProcessedCount);
-                    var percentage = (double)processed / files.Length * 100;
-
-                    Application.Current.Dispatcher.Invoke(() =>
-                    {
-                        ProgressBar.Value = processed;
-                        ProgressText.Text = $"Processing file {processed} of {files.Length}: {fileName} ({percentage:F1}%)";
-                        ProgressBar.Visibility = Visibility.Visible;
-                        ProgressText.Visibility = Visibility.Visible;
-                    });
+                    UpdateProgressDisplay(processed, _totalFilesToProcess, fileName, "Converting");
+                    UpdateStatsDisplay();
+                    UpdateProcessingTimeDisplay();
                 });
             }
             else
@@ -351,35 +367,21 @@ public partial class MainWindow : IDisposable
 
                     if (success)
                     {
-                        successCount++;
+                        _successCount++;
                         LogMessage($"Conversion successful: {fileName}");
                     }
                     else
                     {
-                        failureCount++;
+                        _failureCount++;
                         LogMessage($"Conversion failed: {fileName}");
                     }
 
                     var processed = ++filesProcessedCount;
-                    var percentage = (double)processed / files.Length * 100;
-
-                    Application.Current.Dispatcher.Invoke(() =>
-                    {
-                        ProgressBar.Value = processed;
-                        ProgressText.Text = $"Processing file {processed} of {files.Length}: {fileName} ({percentage:F1}%)";
-                        ProgressBar.Visibility = Visibility.Visible;
-                        ProgressText.Visibility = Visibility.Visible;
-                    });
+                    UpdateProgressDisplay(processed, _totalFilesToProcess, fileName, "Converting");
+                    UpdateStatsDisplay();
+                    UpdateProcessingTimeDisplay();
                 }
             }
-
-            LogMessage("");
-            LogMessage("Batch conversion completed.");
-            LogMessage($"Successfully converted: {successCount} files");
-            if (failureCount > 0) LogMessage($"Failed to convert: {failureCount} files");
-
-            ShowMessageBox($"Batch conversion completed.\n\nSuccessfully converted: {successCount} files\nFailed to convert: {failureCount} files",
-                "Conversion Complete", MessageBoxButton.OK, failureCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
         }
         catch (OperationCanceledException)
         {
@@ -487,6 +489,7 @@ public partial class MainWindow : IDisposable
 
     private async Task<bool> ConvertToRvzAsync(string dolphinToolPath, string inputFile, string outputFile)
     {
+        var process = new Process();
         try
         {
             LogMessage($"Converting '{Path.GetFileName(inputFile)}' to '{Path.GetFileName(outputFile)}'...");
@@ -494,19 +497,16 @@ public partial class MainWindow : IDisposable
             // DolphinTool.exe convert -i input.iso -o output.rvz -f rvz -c compression -l compression_level -b block_size
             var arguments = $"convert -i \"{inputFile}\" -o \"{outputFile}\" -f rvz -c {RvzCompressionMethod} -l {RvzCompressionLevel} -b {RvzBlockSize}";
 
-            var process = new Process
+            process.StartInfo = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = dolphinToolPath,
-                    Arguments = arguments,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                },
-                EnableRaisingEvents = true
+                FileName = dolphinToolPath,
+                Arguments = arguments,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
+            process.EnableRaisingEvents = true;
 
             var outputBuilder = new StringBuilder();
             var errorBuilder = new StringBuilder();
@@ -540,6 +540,62 @@ public partial class MainWindow : IDisposable
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
+            var lastSpeedCheckTime = DateTime.UtcNow;
+            long lastFileSize = 0;
+            if (File.Exists(outputFile))
+            {
+                lastFileSize = new FileInfo(outputFile).Length;
+            }
+
+            while (!process.HasExited)
+            {
+                if (_cts.Token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        if (!process.HasExited) process.Kill(true);
+                    }
+                    catch
+                    {
+                        /* ignore */
+                    }
+
+                    _cts.Token.ThrowIfCancellationRequested();
+                }
+
+                await Task.Delay(WriteSpeedUpdateIntervalMs, _cts.Token);
+
+                if (process.HasExited || _cts.Token.IsCancellationRequested) break;
+
+                try
+                {
+                    if (File.Exists(outputFile))
+                    {
+                        var currentFileSize = new FileInfo(outputFile).Length;
+                        var currentTime = DateTime.UtcNow;
+                        var timeDelta = currentTime - lastSpeedCheckTime;
+
+                        if (timeDelta.TotalSeconds > 0)
+                        {
+                            var bytesDelta = currentFileSize - lastFileSize;
+                            var speed = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
+                            UpdateWriteSpeedDisplay(speed);
+                        }
+
+                        lastFileSize = currentFileSize;
+                        lastSpeedCheckTime = currentTime;
+                    }
+                }
+                catch (FileNotFoundException)
+                {
+                    /* File might not be created yet, or deleted */
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Write speed monitoring error: {ex.Message}");
+                }
+            }
+
             await process.WaitForExitAsync(_cts.Token);
 
             LogMessage($"DolphinTool raw output for {Path.GetFileName(inputFile)}: {outputBuilder}");
@@ -569,6 +625,11 @@ public partial class MainWindow : IDisposable
             }
 
             return false;
+        }
+        finally
+        {
+            UpdateWriteSpeedDisplay(0);
+            process?.Dispose();
         }
     }
 
@@ -628,7 +689,6 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    // Re-add ExtractArchiveAsync
     private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractArchiveAsync(string archivePath)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
@@ -645,68 +705,22 @@ public partial class MainWindow : IDisposable
                 case ".zip":
                     await Task.Run(() => ZipFile.ExtractToDirectory(archivePath, tempDir, true), _cts.Token);
                     break;
-                case ".7z" or ".rar" when !_isSevenZipAvailable:
-                    return (false, string.Empty, tempDir, $"{SevenZipExeName} not found. Cannot extract {extension} files.");
+
                 case ".7z" or ".rar":
-                {
-                    var process = new Process
+                    if (!_isSevenZipDllAvailable)
                     {
-                        StartInfo = new ProcessStartInfo
-                        {
-                            FileName = _sevenZipPath,
-                            Arguments = $"x \"{archivePath}\" -o\"{tempDir}\" -y",
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true,
-                            UseShellExecute = false,
-                            CreateNoWindow = true
-                        }
-                    };
-                    var outputBuilder = new StringBuilder();
-                    var errorBuilder = new StringBuilder();
-                    process.OutputDataReceived += (_, args) =>
-                    {
-                        if (args.Data != null) outputBuilder.AppendLine(args.Data);
-                    };
-                    process.ErrorDataReceived += (_, args) =>
-                    {
-                        if (args.Data != null) errorBuilder.AppendLine(args.Data);
-                    };
-
-                    process.Start();
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-
-                    try
-                    {
-                        await process.WaitForExitAsync(_cts.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        if (!process.HasExited)
-                        {
-                            try
-                            {
-                                process.Kill(true);
-                            }
-                            catch
-                            {
-                                /* Ignore */
-                            }
-                        }
-
-                        LogMessage($"Extraction of {archiveFileName} cancelled.");
-                        throw; // Re-throw cancellation
+                        return (false, string.Empty, tempDir, $"7z.dll not found. Cannot extract {extension} files.");
                     }
 
-                    if (process.ExitCode != 0)
+                    // The extraction itself is synchronous, so we wrap it in Task.Run
+                    // to avoid blocking the UI thread.
+                    await Task.Run(() =>
                     {
-                        LogMessage($"Error extracting {archiveFileName} with {SevenZipExeName}. Exit code: {process.ExitCode}. Output: {outputBuilder}. Error: {errorBuilder}");
-                        return (false, string.Empty, tempDir, $"7z.exe failed. Error: {errorBuilder.ToString().Trim()}");
-                    }
-
-                    LogMessage($"{SevenZipExeName} output for {archiveFileName}: {outputBuilder}");
+                        using var extractor = new SevenZipExtractor(archivePath);
+                        extractor.ExtractArchive(tempDir);
+                    }, _cts.Token); // This allows cancellation *before* the task starts.
                     break;
-                }
+
                 default:
                     // This case should ideally not be hit due to the initial file filter,
                     // but included for completeness.
@@ -875,12 +889,12 @@ public partial class MainWindow : IDisposable
 
     private void ClearProgressDisplay()
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        Application.Current.Dispatcher.InvokeAsync(() =>
         {
+            ProgressBar.Value = 0;
             ProgressBar.Visibility = Visibility.Collapsed;
             ProgressText.Text = string.Empty;
             ProgressText.Visibility = Visibility.Collapsed;
-            ProgressBar.Value = 0;
         });
     }
 
@@ -889,6 +903,303 @@ public partial class MainWindow : IDisposable
         _cts?.Cancel();
         _cts?.Dispose();
         _bugReportService?.Dispose();
+        _operationTimer?.Stop();
         GC.SuppressFinalize(this);
+    }
+
+    private void BrowseVerifyFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var verifyFolder = SelectFolder("Select the folder containing RVZ files to verify");
+        if (string.IsNullOrEmpty(verifyFolder)) return;
+
+        VerifyFolderTextBox.Text = verifyFolder;
+        LogMessage($"Verification folder selected: {verifyFolder}");
+    }
+
+    private async void StartVerifyButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            var dolphinToolPath = Path.Combine(appDirectory, DolphinToolExeName);
+
+            if (!File.Exists(dolphinToolPath))
+            {
+                LogMessage($"Error: {DolphinToolExeName} not found in the application folder.");
+                ShowError($"{DolphinToolExeName} is missing from the application folder. Please ensure it's in the same directory as this application.");
+                await ReportBugAsync($"{DolphinToolExeName} not found when trying to start verification",
+                    new FileNotFoundException($"The required {DolphinToolExeName} file was not found.", dolphinToolPath));
+                return;
+            }
+
+            var verifyFolder = VerifyFolderTextBox.Text;
+            var useParallelProcessing = VerifyParallelProcessingCheckBox.IsChecked ?? false;
+            var maxConcurrency = useParallelProcessing ? 3 : 1;
+
+            if (string.IsNullOrEmpty(verifyFolder))
+            {
+                LogMessage("Error: No verification folder selected.");
+                ShowError("Please select the folder containing RVZ files to verify.");
+                return;
+            }
+
+            if (_cts.IsCancellationRequested)
+            {
+                _cts.Dispose();
+                _cts = new CancellationTokenSource();
+            }
+
+            ResetOperationStats();
+            SetControlsState(false);
+            _operationTimer.Restart();
+
+            LogMessage("Starting batch verification process...");
+            LogMessage($"Using {DolphinToolExeName}: {dolphinToolPath}");
+            LogMessage($"Verification folder: {verifyFolder}");
+            LogMessage($"Parallel file processing: {useParallelProcessing} (Max concurrency: {maxConcurrency})");
+
+            try
+            {
+                await PerformBatchVerificationAsync(dolphinToolPath, verifyFolder, useParallelProcessing, maxConcurrency);
+            }
+            catch (OperationCanceledException)
+            {
+                LogMessage("Operation was canceled by user.");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error: {ex.Message}");
+                await ReportBugAsync("Error during batch verification process", ex);
+            }
+            finally
+            {
+                _operationTimer.Stop();
+                UpdateProcessingTimeDisplay();
+                SetControlsState(true);
+                LogOperationSummary("Verification");
+            }
+        }
+        catch (Exception ex)
+        {
+            await ReportBugAsync("Error during StartVerifyButton_Click", ex);
+        }
+    }
+
+    private async Task PerformBatchVerificationAsync(string dolphinToolPath, string verifyFolder, bool useParallelProcessing, int maxConcurrency)
+    {
+        try
+        {
+            LogMessage("Preparing for batch verification...");
+
+            var files = Directory.GetFiles(verifyFolder, "*.*", SearchOption.TopDirectoryOnly)
+                .Where(file => RvzExtension.Contains(Path.GetExtension(file).ToLowerInvariant()))
+                .ToArray();
+
+            _totalFilesToProcess = files.Length;
+            UpdateStatsDisplay();
+            LogMessage($"Found {_totalFilesToProcess} RVZ files to verify.");
+            if (_totalFilesToProcess == 0)
+            {
+                LogMessage("No RVZ files (.rvz) found in the selected folder.");
+                return;
+            }
+
+            var filesProcessedCount = 0;
+
+            if (useParallelProcessing && files.Length > 1)
+            {
+                var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = _cts.Token };
+                await Parallel.ForEachAsync(files, parallelOptions, async (inputFile, token) =>
+                {
+                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile);
+                    if (success) Interlocked.Increment(ref _successCount);
+                    else Interlocked.Increment(ref _failureCount);
+
+                    var processed = Interlocked.Increment(ref filesProcessedCount);
+                    UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
+                    UpdateStatsDisplay();
+                    UpdateProcessingTimeDisplay();
+                });
+            }
+            else
+            {
+                foreach (var inputFile in files)
+                {
+                    if (_cts.Token.IsCancellationRequested) break;
+
+                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile);
+                    if (success)
+                    {
+                        _successCount++;
+                    }
+                    else
+                    {
+                        _failureCount++;
+                    }
+
+                    var processed = ++filesProcessedCount;
+                    UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
+                    UpdateStatsDisplay();
+                    UpdateProcessingTimeDisplay();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            LogMessage("Batch verification operation was canceled.");
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error during batch verification: {ex.Message}");
+            ShowError($"Error during batch verification: {ex.Message}");
+            await ReportBugAsync("Error during batch verification operation", ex);
+        }
+    }
+
+    private async Task<bool> VerifyRzvFileAsync(string dolphinToolPath, string inputFile)
+    {
+        var fileName = Path.GetFileName(inputFile);
+        using var process = new Process();
+        try
+        {
+            LogMessage($"Verifying: {fileName}...");
+            var arguments = $"verify -i \"{inputFile}\"";
+
+            process.StartInfo = new ProcessStartInfo
+            {
+                FileName = dolphinToolPath,
+                Arguments = arguments,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            process.EnableRaisingEvents = true;
+
+            var outputBuilder = new StringBuilder();
+            process.OutputDataReceived += (_, args) =>
+            {
+                if (args.Data != null) outputBuilder.AppendLine(args.Data);
+            };
+            process.ErrorDataReceived += (_, args) =>
+            {
+                if (args.Data != null) outputBuilder.AppendLine(args.Data);
+            }; // Capture both to one builder
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            await process.WaitForExitAsync(_cts.Token);
+
+            var output = outputBuilder.ToString();
+            if (process.ExitCode == 0 && output.Contains("Verification successful"))
+            {
+                LogMessage($"[OK] Verification successful for: {fileName}");
+                return true;
+            }
+
+            LogMessage($"[FAIL] Verification failed for: {fileName}. Output: {output.Trim()}");
+            await ReportBugAsync($"Verification failed for {fileName}", new Exception(output));
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            LogMessage($"Verification cancelled for {fileName}.");
+            if (process.HasExited) throw;
+
+            try
+            {
+                process.Kill(true);
+            }
+            catch
+            {
+                /* Ignore */
+            }
+
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error verifying file {fileName}: {ex.Message}");
+            await ReportBugAsync($"Error verifying file: {fileName}", ex);
+            return false;
+        }
+    }
+
+    private void ResetOperationStats()
+    {
+        _totalFilesToProcess = 0;
+        _successCount = 0;
+        _failureCount = 0;
+        _operationTimer.Reset();
+        UpdateStatsDisplay();
+        UpdateProcessingTimeDisplay();
+        UpdateWriteSpeedDisplay(0);
+        ClearProgressDisplay();
+    }
+
+    private void UpdateStatsDisplay()
+    {
+        Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            TotalFilesValue.Text = _totalFilesToProcess.ToString(CultureInfo.InvariantCulture);
+            SuccessValue.Text = _successCount.ToString(CultureInfo.InvariantCulture);
+            FailedValue.Text = _failureCount.ToString(CultureInfo.InvariantCulture);
+        });
+    }
+
+    private void UpdateProcessingTimeDisplay()
+    {
+        var elapsed = _operationTimer.Elapsed;
+        Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            ProcessingTimeValue.Text = $@"{elapsed:hh\:mm\:ss}";
+        });
+    }
+
+    private void UpdateWriteSpeedDisplay(double speedInMBps)
+    {
+        Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            WriteSpeedValue.Text = $"{speedInMBps:F1} MB/s";
+        });
+    }
+
+    private void UpdateProgressDisplay(int current, int total, string currentFileName, string operationVerb)
+    {
+        var percentage = total == 0 ? 0 : (double)current / total * 100;
+        Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            ProgressText.Text = $"{operationVerb} file {current} of {total}: {currentFileName} ({percentage:F1}%)";
+            ProgressBar.Value = current;
+            ProgressBar.Maximum = total > 0 ? total : 1;
+        });
+    }
+
+    private void LogOperationSummary(string operationType)
+    {
+        LogMessage("");
+        LogMessage($"--- Batch {operationType.ToLowerInvariant()} completed. ---");
+        LogMessage($"Total files processed: {_totalFilesToProcess}");
+        LogMessage($"Successfully {GetPastTense(operationType)}: {_successCount} files");
+        if (_failureCount > 0) LogMessage($"Failed to {operationType.ToLowerInvariant()}: {_failureCount} files");
+
+        ShowMessageBox($"Batch {operationType.ToLowerInvariant()} completed.\n\n" +
+                       $"Total files processed: {_totalFilesToProcess}\n" +
+                       $"Successfully {GetPastTense(operationType)}: {_successCount} files\n" +
+                       $"Failed: {_failureCount} files",
+            $"{operationType} Complete", MessageBoxButton.OK,
+            _failureCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+    }
+
+    private static string GetPastTense(string verb)
+    {
+        return verb.ToLowerInvariant() switch
+        {
+            "conversion" => "converted",
+            "verification" => "verified",
+            _ => verb.ToLowerInvariant() + "ed"
+        };
     }
 }
