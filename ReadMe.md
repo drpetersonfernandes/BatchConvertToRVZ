@@ -15,7 +15,7 @@ It uses **DolphinTool.exe** from the Dolphin Emulator project for the actual con
 - **Batch Processing**: Convert multiple files in a single operation.
 - **Supported Formats**: Handles GameCube and Wii ISO files (`.iso`) **and archives containing them**.
 - **Archive Support**: Automatically extracts and processes supported `.iso` files from `.zip`, `.7z`, and `.rar` archives.
-- **7-Zip Integration**: Uses `7z.exe` for `.7z` and `.rar` extraction, included with the application.
+- **7-Zip Integration**: Uses the SevenZipSharp library with `7z.dll` for `.7z` and `.rar` extraction, included with the application.
 - **Parallel Processing**: Optionally process multiple files in parallel to speed up batch completion.
 - **Progress Tracking**: Detailed progress indication and real-time logging during the conversion process.
 - **Delete Original Option**: Option to remove source files (**including archives**) after successful conversion.
@@ -32,7 +32,7 @@ It uses **DolphinTool.exe** from the Dolphin Emulator project for the actual con
 - Windows 7 or later
 - [.NET 9.0 Runtime](https://dotnet.microsoft.com/download/dotnet/9.0)
 - `DolphinTool.exe` (included with the application)
-- `7z.exe` and optionally `7z.dll` for archive extraction (included with the application)
+- `7z.dll` for archive extraction (included with the application)
 
 ## Installation
 
@@ -68,16 +68,16 @@ RVZ is a compressed disk image format developed specifically for the Dolphin Emu
 
 ## Troubleshooting
 
-- Ensure `DolphinTool.exe` **and `7z.exe`** are present in the same directory as the application.
+- Ensure `DolphinTool.exe` and `7z.dll` are present in the same directory as the application.
 - Make sure you have appropriate permissions to read from the input and write to the output directories.
-- If `.7z` or `.rar` extraction is failing, verify that `7z.exe` is not missing.
+- If `.7z` or `.rar` extraction is failing, verify that `7z.dll` is not missing.
 - Review the application log window for detailed error messages during conversion.
 - Automatic error reports will be sent to the developer if unexpected issues occur.
 
 ## Acknowledgements
 
 - Uses **DolphinTool.exe** from the [Dolphin Emulator project](https://dolphin-emu.org/) for RVZ file conversions.
-- Uses **7-Zip** (`7z.exe`) for extracting `.7z` and `.rar` archives.
+- Uses the **SevenZipSharp** library with `7z.dll` for extracting `.7z` and `.rar` archives.
 - Developed by [Pure Logic Code](https://www.purelogiccode.com).
 
 ---

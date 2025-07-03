@@ -96,9 +96,14 @@
                         <Button x:Name="BrowseVerifyFolderButton" Grid.Column="2" Content="Browse" Click="BrowseVerifyFolderButton_Click" Padding="10,5"/>
                     </Grid>
 
-                    <!-- Parallel Processing Checkbox -->
-                    <CheckBox x:Name="VerifyParallelProcessingCheckBox"
-                              Content="Enable parallel processing (multiple files at once)"
+                    <!-- NEW: Checkboxes for moving files -->
+                    <CheckBox x:Name="MoveFailedCheckBox"
+                              Content="Move failed RVZ files to '_Failed' subfolder"
+                              Margin="10,5,10,5"
+                              HorizontalAlignment="Left"
+                              IsChecked="False"/>
+                    <CheckBox x:Name="MoveSuccessCheckBox"
+                              Content="Move successful RVZ files to '_Success' subfolder"
                               Margin="10,5,10,5"
                               HorizontalAlignment="Left"
                               IsChecked="False"/>

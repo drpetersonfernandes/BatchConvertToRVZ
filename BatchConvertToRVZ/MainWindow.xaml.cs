@@ -52,6 +52,10 @@ public partial class MainWindow : IDisposable
     // For Write Speed Calculation
     private const int WriteSpeedUpdateIntervalMs = 1000;
 
+    // Fields for verification move options
+    private bool _moveFailedFiles;
+    private bool _moveSuccessFiles;
+
 
     public MainWindow()
     {
@@ -81,7 +85,6 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"WARNING: {DolphinToolExeName} not found in the application directory!");
             LogMessage($"Please ensure {DolphinToolExeName} is in the same folder as this application.");
-            // FIX: Changed Task.Run lambda syntax
             Task.Run(() => ReportBugAsync($"{DolphinToolExeName} not found in the application directory. This will prevent the application from functioning correctly."));
         }
 
@@ -106,19 +109,12 @@ public partial class MainWindow : IDisposable
     {
         // Signal cancellation to any ongoing background tasks
         _cts.Cancel();
-
-        // Allow the window to close normally.
-        // WPF will handle the rest of the shutdown process,
-        // including disposing of window resources.
-        // The Dispose method on MainWindow will be called by the framework
-        // when the window's HwndSource is disposed during shutdown.
     }
 
     private void LogMessage(string message)
     {
         var timestampedMessage = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
 
-        // Use Dispatcher.BeginInvoke for potentially faster non-blocking updates
         Application.Current.Dispatcher.BeginInvoke(() =>
         {
             LogViewer.AppendText($"{timestampedMessage}{Environment.NewLine}");
@@ -128,7 +124,6 @@ public partial class MainWindow : IDisposable
 
     private void BrowseInputButton_Click(object sender, RoutedEventArgs e)
     {
-        // Updated description
         var inputFolder = SelectFolder("Select the folder containing ISO files or archives to convert");
         if (string.IsNullOrEmpty(inputFolder)) return;
 
@@ -166,14 +161,7 @@ public partial class MainWindow : IDisposable
             var deleteFiles = DeleteFilesCheckBox.IsChecked ?? false;
             var useParallelFileProcessing = ParallelProcessingCheckBox.IsChecked ?? false;
 
-            if (useParallelFileProcessing)
-            {
-                _currentDegreeOfParallelismForFiles = 3; // Fixed maximum concurrency = 3
-            }
-            else
-            {
-                _currentDegreeOfParallelismForFiles = 1;
-            }
+            _currentDegreeOfParallelismForFiles = useParallelFileProcessing ? 3 : 1;
 
             if (string.IsNullOrEmpty(inputFolder))
             {
@@ -189,7 +177,6 @@ public partial class MainWindow : IDisposable
                 return;
             }
 
-            // Ensure output folder exists
             try
             {
                 Directory.CreateDirectory(outputFolder);
@@ -256,10 +243,8 @@ public partial class MainWindow : IDisposable
 
     private void SetControlsState(bool enabled)
     {
-        // Disable/enable the whole tab control to prevent switching
         MainTabControl.IsEnabled = enabled;
 
-        // Convert Tab Controls
         InputFolderTextBox.IsEnabled = enabled;
         OutputFolderTextBox.IsEnabled = enabled;
         BrowseInputButton.IsEnabled = enabled;
@@ -268,13 +253,12 @@ public partial class MainWindow : IDisposable
         ParallelProcessingCheckBox.IsEnabled = enabled;
         StartConversionButton.IsEnabled = enabled;
 
-        // Verify Tab Controls
         VerifyFolderTextBox.IsEnabled = enabled;
         BrowseVerifyFolderButton.IsEnabled = enabled;
-        VerifyParallelProcessingCheckBox.IsEnabled = enabled;
+        MoveFailedCheckBox.IsEnabled = enabled;
+        MoveSuccessCheckBox.IsEnabled = enabled;
         StartVerifyButton.IsEnabled = enabled;
 
-        // Progress controls visibility is the inverse of enabled state
         ProgressBar.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         CancelButton.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         ProgressText.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
@@ -300,7 +284,6 @@ public partial class MainWindow : IDisposable
         {
             LogMessage("Preparing for batch conversion...");
 
-            // Find supported files (.iso, .zip, .7z, .rar) in the input folder
             var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
                 .Where(file => AllSupportedInputExtensions.Contains(Path.GetExtension(file).ToLowerInvariant()))
                 .ToArray();
@@ -310,7 +293,7 @@ public partial class MainWindow : IDisposable
             LogMessage($"Found {_totalFilesToProcess} files to process.");
             if (_totalFilesToProcess == 0)
             {
-                LogMessage("No supported files (.iso, .zip, .7z, .rar) found in the input folder."); // Updated message
+                LogMessage("No supported files (.iso, .zip, .7z, .rar) found in the input folder.");
                 return;
             }
 
@@ -395,7 +378,6 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    // Modified ProcessFileAsync to handle archives
     private async Task<bool> ProcessFileAsync(string dolphinToolPath, string inputFile, string outputFolder, bool deleteOriginal)
     {
         var fileToProcess = inputFile;
@@ -419,20 +401,17 @@ public partial class MainWindow : IDisposable
                 else
                 {
                     LogMessage($"Error extracting archive {Path.GetFileName(inputFile)}: {extractResult.ErrorMessage}");
-                    // Report extraction failure as a bug
                     await ReportBugAsync($"Error extracting archive: {Path.GetFileName(inputFile)}", new Exception(extractResult.ErrorMessage));
                     return false;
                 }
             }
 
-            // Now process the fileToProcess (either original ISO or extracted ISO)
             var outputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
 
-            // Check if output file already exists
             if (File.Exists(outputFile))
             {
                 LogMessage($"Output file already exists, skipping: {Path.GetFileName(outputFile)}");
-                return true; // Consider existing file as successful conversion for this run
+                return true;
             }
 
             var success = await ConvertToRvzAsync(dolphinToolPath, fileToProcess, outputFile);
@@ -441,12 +420,10 @@ public partial class MainWindow : IDisposable
 
             if (isArchiveFile)
             {
-                // Delete the original archive file
                 TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}");
             }
             else
             {
-                // Delete the original standalone ISO file
                 TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}");
             }
 
@@ -455,20 +432,18 @@ public partial class MainWindow : IDisposable
         catch (OperationCanceledException)
         {
             LogMessage($"Processing cancelled for {Path.GetFileName(inputFile)}.");
-            // Attempt to clean up partially created output file on cancellation
             var potentialOutputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
             if (File.Exists(potentialOutputFile))
             {
                 TryDeleteFile(potentialOutputFile, "partially created RVZ file after cancellation");
             }
 
-            throw; // Re-throw cancellation exception
+            throw;
         }
         catch (Exception ex)
         {
             LogMessage($"Error processing file {Path.GetFileName(inputFile)}: {ex.Message}");
             await ReportBugAsync($"Error processing file: {Path.GetFileName(inputFile)}", ex);
-            // Attempt to clean up partially created output file on error
             var potentialOutputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
             if (File.Exists(potentialOutputFile))
             {
@@ -479,7 +454,6 @@ public partial class MainWindow : IDisposable
         }
         finally
         {
-            // Clean up the temporary directory if one was created
             if (isArchiveFile && !string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
             {
                 TryDeleteDirectory(tempDir, "temporary extraction directory");
@@ -494,7 +468,6 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Converting '{Path.GetFileName(inputFile)}' to '{Path.GetFileName(outputFile)}'...");
 
-            // DolphinTool.exe convert -i input.iso -o output.rvz -f rvz -c compression -l compression_level -b block_size
             var arguments = $"convert -i \"{inputFile}\" -o \"{outputFile}\" -f rvz -c {RvzCompressionMethod} -l {RvzCompressionLevel} -b {RvzBlockSize}";
 
             process.StartInfo = new ProcessStartInfo
@@ -511,13 +484,11 @@ public partial class MainWindow : IDisposable
             var outputBuilder = new StringBuilder();
             var errorBuilder = new StringBuilder();
 
-            // Capture output and error streams
             process.OutputDataReceived += (_, args) =>
             {
                 if (string.IsNullOrEmpty(args.Data)) return;
 
                 outputBuilder.AppendLine(args.Data);
-                // Attempt to parse progress. If not handled, log the raw line.
                 if (!UpdateConversionProgress(args.Data))
                 {
                     LogMessage($"[DolphinTool] {args.Data}");
@@ -528,10 +499,8 @@ public partial class MainWindow : IDisposable
                 if (string.IsNullOrEmpty(args.Data)) return;
 
                 errorBuilder.AppendLine(args.Data);
-                // Attempt to parse progress. If not handled, log the raw line.
                 if (!UpdateConversionProgress(args.Data))
                 {
-                    // Log errors differently
                     LogMessage($"[DolphinTool ERROR] {args.Data}");
                 }
             };
@@ -606,7 +575,6 @@ public partial class MainWindow : IDisposable
         catch (OperationCanceledException)
         {
             LogMessage($"Conversion cancelled for {Path.GetFileName(inputFile)}.");
-            // Attempt to clean up partially created output file on cancellation
             if (File.Exists(outputFile))
             {
                 TryDeleteFile(outputFile, "partially created RVZ file after cancellation");
@@ -618,7 +586,6 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Error converting file {Path.GetFileName(inputFile)}: {ex.Message}");
             await ReportBugAsync($"Error converting file: {Path.GetFileName(inputFile)}", ex);
-            // Attempt to clean up partially created output file on error
             if (File.Exists(outputFile))
             {
                 TryDeleteFile(outputFile, "partially created RVZ file after error");
@@ -639,7 +606,6 @@ public partial class MainWindow : IDisposable
         {
             if (!File.Exists(filePath)) return;
 
-            // Ensure the file is not read-only before attempting deletion
             var attributes = File.GetAttributes(filePath);
             if ((attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
             {
@@ -652,35 +618,30 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)}: {ex.Message}");
-            // FIX: Changed Task.Run lambda syntax
             Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)}", ex));
         }
     }
 
-    // Re-add TryDeleteDirectory
     private void TryDeleteDirectory(string dirPath, string description)
     {
         try
         {
             if (!Directory.Exists(dirPath)) return;
 
-            // Use a loop with delay for robustness in case of file locks
             for (var i = 0; i < 5; i++)
             {
                 try
                 {
                     Directory.Delete(dirPath, true);
                     LogMessage($"Cleaned up {description}: {dirPath}");
-                    return; // Success
+                    return;
                 }
                 catch (IOException)
                 {
-                    // Directory might still be in use, wait and retry
                     Thread.Sleep(50);
                 }
             }
 
-            // If loop finishes without success
             LogMessage($"Failed to clean up {description} {dirPath} after multiple retries.");
         }
         catch (Exception ex)
@@ -712,22 +673,17 @@ public partial class MainWindow : IDisposable
                         return (false, string.Empty, tempDir, $"7z.dll not found. Cannot extract {extension} files.");
                     }
 
-                    // The extraction itself is synchronous, so we wrap it in Task.Run
-                    // to avoid blocking the UI thread.
                     await Task.Run(() =>
                     {
                         using var extractor = new SevenZipExtractor(archivePath);
                         extractor.ExtractArchive(tempDir);
-                    }, _cts.Token); // This allows cancellation *before* the task starts.
+                    }, _cts.Token);
                     break;
 
                 default:
-                    // This case should ideally not be hit due to the initial file filter,
-                    // but included for completeness.
                     return (false, string.Empty, tempDir, $"Unsupported archive type: {extension}");
             }
 
-            // Find the first supported primary file (.iso) in the extracted directory
             var supportedFile = Directory.GetFiles(tempDir, "*.*", SearchOption.AllDirectories)
                 .FirstOrDefault(f => PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(f).ToLowerInvariant()));
 
@@ -736,65 +692,45 @@ public partial class MainWindow : IDisposable
                 return (true, supportedFile, tempDir, string.Empty);
             }
 
-            return (false, string.Empty, tempDir, "No supported primary files (.iso) found in archive."); // Updated message
+            return (false, string.Empty, tempDir, "No supported primary files (.iso) found in archive.");
         }
         catch (OperationCanceledException)
         {
-            // Clean up temp dir on cancellation
             TryDeleteDirectory(tempDir, $"cancelled extraction directory for {archiveFileName}");
-            throw; // Re-throw cancellation
+            throw;
         }
         catch (Exception ex)
         {
             LogMessage($"Error extracting archive {archiveFileName}: {ex.Message}");
             await ReportBugAsync($"Error extracting archive: {archiveFileName}", ex);
-            // Clean up temp dir on error
             TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
             return (false, string.Empty, tempDir, $"Exception during extraction: {ex.Message}");
         }
     }
 
-
-    // DeleteOriginalFilesAsync is no longer needed as deletion logic is in ProcessFileAsync
-
-
-    /// <summary>
-    /// Attempts to parse and log progress from a DolphinTool output line.
-    /// </summary>
-    /// <param name="progressLine">The line from DolphinTool's output.</param>
-    /// <returns>True if the line was recognized and handled as a progress line, false otherwise.</returns>
     private bool UpdateConversionProgress(string progressLine)
     {
         try
         {
-            // Attempt to parse percentage from the line
-            // Regex looks for digits, optional comma/period, optional digits, followed by %
             var match = Regex.Match(progressLine, @"(\d+[\.,]?\d*)%");
             if (!match.Success) return false;
 
             var percentageStr = match.Groups[1].Value.Replace(',', '.');
             if (!double.TryParse(percentageStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var percentage))
                 return false;
-            // Use the percentage to log a specific progress message
-            // This uses the 'percentage' variable, resolving the warning.
-            // Note: DolphinTool output format might vary, this is based on a common pattern.
-            // We are not using this to update the main progress bar, which tracks files.
-            LogMessage($"DolphinTool Converting: {percentage:F1}%");
-            return true; // Handled as a progress line
 
-            // If we reach here, it wasn't a recognized progress line
+            LogMessage($"DolphinTool Converting: {percentage:F1}%");
+            return true;
         }
         catch (Exception ex)
         {
             LogMessage($"Error parsing DolphinTool progress line '{progressLine}': {ex.Message}");
-            return false; // Failed to parse/handle
+            return false;
         }
     }
 
-    // Helper methods for UI interaction (Re-added/Ensured Private)
     private void ShowMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
     {
-        // Ensure this runs on the UI thread
         Application.Current.Dispatcher.Invoke(() => MessageBox.Show(this, message, title, buttons, icon));
     }
 
@@ -809,7 +745,7 @@ public partial class MainWindow : IDisposable
         {
             var fullReport = new StringBuilder();
             fullReport.AppendLine("=== Bug Report ===");
-            fullReport.AppendLine($"Application: {ApplicationName}"); // Use the constant
+            fullReport.AppendLine($"Application: {ApplicationName}");
             fullReport.AppendLine(CultureInfo.InvariantCulture, $"Version: {GetType().Assembly.GetName().Version}");
             fullReport.AppendLine(CultureInfo.InvariantCulture, $"OS: {Environment.OSVersion}");
             fullReport.AppendLine(CultureInfo.InvariantCulture, $".NET Version: {Environment.Version}");
@@ -825,7 +761,6 @@ public partial class MainWindow : IDisposable
                 AppendExceptionDetailsToReport(fullReport, exception);
             }
 
-            // Safely get log content from UI thread
             if (LogViewer != null)
             {
                 var logContent = string.Empty;
@@ -867,7 +802,6 @@ public partial class MainWindow : IDisposable
         }
     }
 
-
     private void ExitMenuItem_Click(object sender, RoutedEventArgs e)
     {
         Close();
@@ -882,7 +816,6 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error opening About window: {ex.Message}");
-            // FIX: Changed Task.Run lambda syntax
             Task.Run(() => ReportBugAsync("Error opening About window", ex));
         }
     }
@@ -933,8 +866,8 @@ public partial class MainWindow : IDisposable
             }
 
             var verifyFolder = VerifyFolderTextBox.Text;
-            var useParallelProcessing = VerifyParallelProcessingCheckBox.IsChecked ?? false;
-            var maxConcurrency = useParallelProcessing ? 3 : 1;
+            _moveFailedFiles = MoveFailedCheckBox.IsChecked ?? false;
+            _moveSuccessFiles = MoveSuccessCheckBox.IsChecked ?? false;
 
             if (string.IsNullOrEmpty(verifyFolder))
             {
@@ -956,11 +889,13 @@ public partial class MainWindow : IDisposable
             LogMessage("Starting batch verification process...");
             LogMessage($"Using {DolphinToolExeName}: {dolphinToolPath}");
             LogMessage($"Verification folder: {verifyFolder}");
-            LogMessage($"Parallel file processing: {useParallelProcessing} (Max concurrency: {maxConcurrency})");
+            if (_moveFailedFiles) LogMessage("Failed files will be moved to '_Failed' subfolder.");
+            if (_moveSuccessFiles) LogMessage("Successful files will be moved to '_Success' subfolder.");
+
 
             try
             {
-                await PerformBatchVerificationAsync(dolphinToolPath, verifyFolder, useParallelProcessing, maxConcurrency);
+                await PerformBatchVerificationAsync(dolphinToolPath, verifyFolder, _moveFailedFiles, _moveSuccessFiles);
             }
             catch (OperationCanceledException)
             {
@@ -985,7 +920,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task PerformBatchVerificationAsync(string dolphinToolPath, string verifyFolder, bool useParallelProcessing, int maxConcurrency)
+    private async Task PerformBatchVerificationAsync(string dolphinToolPath, string verifyFolder, bool moveFailed, bool moveSuccess)
     {
         try
         {
@@ -1006,42 +941,24 @@ public partial class MainWindow : IDisposable
 
             var filesProcessedCount = 0;
 
-            if (useParallelProcessing && files.Length > 1)
+            foreach (var inputFile in files)
             {
-                var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = _cts.Token };
-                await Parallel.ForEachAsync(files, parallelOptions, async (inputFile, token) =>
+                if (_cts.Token.IsCancellationRequested) break;
+
+                var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, verifyFolder, moveFailed, moveSuccess);
+                if (success)
                 {
-                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile);
-                    if (success) Interlocked.Increment(ref _successCount);
-                    else Interlocked.Increment(ref _failureCount);
-
-                    var processed = Interlocked.Increment(ref filesProcessedCount);
-                    UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
-                    UpdateStatsDisplay();
-                    UpdateProcessingTimeDisplay();
-                });
-            }
-            else
-            {
-                foreach (var inputFile in files)
-                {
-                    if (_cts.Token.IsCancellationRequested) break;
-
-                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile);
-                    if (success)
-                    {
-                        _successCount++;
-                    }
-                    else
-                    {
-                        _failureCount++;
-                    }
-
-                    var processed = ++filesProcessedCount;
-                    UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
-                    UpdateStatsDisplay();
-                    UpdateProcessingTimeDisplay();
+                    _successCount++;
                 }
+                else
+                {
+                    _failureCount++;
+                }
+
+                var processed = ++filesProcessedCount;
+                UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
+                UpdateStatsDisplay();
+                UpdateProcessingTimeDisplay();
             }
         }
         catch (OperationCanceledException)
@@ -1056,14 +973,21 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task<bool> VerifyRzvFileAsync(string dolphinToolPath, string inputFile)
+    private async Task<bool> VerifyRzvFileAsync(string dolphinToolPath, string inputFile, string baseFolder, bool moveFailed, bool moveSuccess)
     {
         var fileName = Path.GetFileName(inputFile);
         using var process = new Process();
+        var verificationResult = false;
+        string? tempWorkingDirectory = null;
+        var wasCanceled = false; // NEW: Flag to track if cancellation occurred for this specific task
+
         try
         {
             LogMessage($"Verifying: {fileName}...");
             var arguments = $"verify -i \"{inputFile}\"";
+
+            tempWorkingDirectory = Path.Combine(Path.GetTempPath(), "BatchConvertToRVZ_DolphinTool_Temp_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempWorkingDirectory);
 
             process.StartInfo = new ProcessStartInfo
             {
@@ -1072,7 +996,8 @@ public partial class MainWindow : IDisposable
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                WorkingDirectory = tempWorkingDirectory
             };
             process.EnableRaisingEvents = true;
 
@@ -1084,7 +1009,7 @@ public partial class MainWindow : IDisposable
             process.ErrorDataReceived += (_, args) =>
             {
                 if (args.Data != null) outputBuilder.AppendLine(args.Data);
-            }; // Capture both to one builder
+            };
 
             process.Start();
             process.BeginOutputReadLine();
@@ -1093,19 +1018,22 @@ public partial class MainWindow : IDisposable
             await process.WaitForExitAsync(_cts.Token);
 
             var output = outputBuilder.ToString();
-            if (process.ExitCode == 0 && output.Contains("Verification successful"))
+            if (process.ExitCode == 0 && output.Contains("Problems Found: No"))
             {
                 LogMessage($"[OK] Verification successful for: {fileName}");
-                return true;
+                verificationResult = true;
             }
-
-            LogMessage($"[FAIL] Verification failed for: {fileName}. Output: {output.Trim()}");
-            await ReportBugAsync($"Verification failed for {fileName}", new Exception(output));
-            return false;
+            else
+            {
+                LogMessage($"[FAIL] Verification failed for: {fileName}. Output: {output.Trim()}");
+                await ReportBugAsync($"Verification failed for {fileName}", new Exception(output));
+                verificationResult = false;
+            }
         }
         catch (OperationCanceledException)
         {
             LogMessage($"Verification cancelled for {fileName}.");
+            wasCanceled = true; // Set the flag
             if (process.HasExited) throw;
 
             try
@@ -1123,7 +1051,58 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Error verifying file {fileName}: {ex.Message}");
             await ReportBugAsync($"Error verifying file: {fileName}", ex);
-            return false;
+            verificationResult = false;
+        }
+        finally
+        {
+            // NEW: Only move files if the operation was NOT canceled for this specific file
+            if (!wasCanceled)
+            {
+                if (verificationResult && moveSuccess)
+                {
+                    MoveFileToSubfolder(inputFile, baseFolder, "_Success");
+                }
+                else if (!verificationResult && moveFailed)
+                {
+                    MoveFileToSubfolder(inputFile, baseFolder, "_Failed");
+                }
+            }
+            else
+            {
+                LogMessage($"Skipping move for '{fileName}' due to cancellation.");
+            }
+
+            if (!string.IsNullOrEmpty(tempWorkingDirectory) && Directory.Exists(tempWorkingDirectory))
+            {
+                TryDeleteDirectory(tempWorkingDirectory, $"temporary working directory for {fileName}");
+            }
+        }
+
+        return verificationResult;
+    }
+
+    private void MoveFileToSubfolder(string sourceFilePath, string baseFolder, string subfolderName)
+    {
+        try
+        {
+            var destinationFolder = Path.Combine(baseFolder, subfolderName);
+            Directory.CreateDirectory(destinationFolder);
+
+            var destinationFilePath = Path.Combine(destinationFolder, Path.GetFileName(sourceFilePath));
+
+            if (File.Exists(destinationFilePath))
+            {
+                LogMessage($"Deleting existing file at destination: {Path.GetFileName(destinationFilePath)}");
+                TryDeleteFile(destinationFilePath, $"existing file in {subfolderName} folder");
+            }
+
+            File.Move(sourceFilePath, destinationFilePath);
+            LogMessage($"Moved '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder.");
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error moving file '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder: {ex.Message}");
+            Task.Run(() => ReportBugAsync($"Error moving file: {Path.GetFileName(sourceFilePath)} to {subfolderName}", ex));
         }
     }
 
