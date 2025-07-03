@@ -76,7 +76,7 @@ RVZ is a compressed disk image format developed specifically for the Dolphin Emu
 
 ## Acknowledgements
 
-- Uses **DolphinTool.exe** from the [Dolphin Emulator project](https://dolphin-emu.org/) for RVZ file conversions.
+- Use **DolphinTool.exe** from the [Dolphin Emulator project](https://dolphin-emu.org/) for RVZ file conversions.
 - Uses the **SevenZipSharp** library with `7z.dll` for extracting `.7z` and `.rar` archives.
 - Developed by [Pure Logic Code](https://www.purelogiccode.com).
 

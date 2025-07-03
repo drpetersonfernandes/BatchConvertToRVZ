@@ -259,13 +259,15 @@ public partial class MainWindow : IDisposable
         MoveSuccessCheckBox.IsEnabled = enabled;
         StartVerifyButton.IsEnabled = enabled;
 
-        ProgressBar.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+        // Progress bar and text are now always visible in XAML,
+        // so we only control the Cancel button's visibility here.
         CancelButton.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
-        ProgressText.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
 
-        if (!enabled) return;
+        if (enabled) // If controls are enabled (operation finished or not started)
+        {
+            ClearProgressDisplay(); // Set to idle state
+        }
 
-        ClearProgressDisplay();
         UpdateWriteSpeedDisplay(0);
     }
 
@@ -824,10 +826,9 @@ public partial class MainWindow : IDisposable
     {
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
-            ProgressBar.Value = 0;
-            ProgressBar.Visibility = Visibility.Collapsed;
-            ProgressText.Text = string.Empty;
-            ProgressText.Visibility = Visibility.Collapsed;
+            ProgressBar.Value = 0; // Reset progress
+            ProgressBar.Maximum = 1; // Ensure the maximum is not zero when idle
+            ProgressText.Text = "Ready."; // Set a default idle message
         });
     }
 
