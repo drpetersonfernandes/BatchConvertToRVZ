@@ -2,7 +2,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.IO.Compression; // Added for ZipFile
+using System.Reflection;
 using System.Text;
 using System.Windows;
 using Microsoft.Win32;
@@ -15,11 +15,13 @@ public partial class MainWindow : IDisposable
 {
     private CancellationTokenSource _cts;
     private readonly BugReportService _bugReportService;
+    private readonly UpdateService _updateService;
 
     // Bug Report API configuration
     private const string BugReportApiUrl = "https://www.purelogiccode.com/bugreport/api/send-bug-report";
     private const string BugReportApiKey = "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e";
     private const string ApplicationName = "BatchConvertToRVZ";
+    private const string GitHubApiUrl = "https://api.github.com/repos/drpetersonfernandes/BatchConvertToRVZ/releases/latest";
 
     private int _currentDegreeOfParallelismForFiles = 1;
 
@@ -28,9 +30,6 @@ public partial class MainWindow : IDisposable
     private const string RvzCompressionMethod = "zstd"; // Default compression method
     private const int RvzCompressionLevel = 5; // Default compression level
     private const int RvzBlockSize = 131072; // Default block size
-
-    // 7z specific constants and fields
-    private readonly bool _isSevenZipDllAvailable;
 
     // Supported input extensions (Updated to include archives)
     private static readonly string[] AllSupportedInputExtensions = { ".iso", ".zip", ".7z", ".rar" };
@@ -64,6 +63,7 @@ public partial class MainWindow : IDisposable
 
         // Initialize the bug report service
         _bugReportService = new BugReportService(BugReportApiUrl, BugReportApiKey, ApplicationName);
+        _updateService = new UpdateService(GitHubApiUrl);
 
         LogMessage("Welcome to the Batch Convert to RVZ.");
         LogMessage("");
@@ -88,21 +88,21 @@ public partial class MainWindow : IDisposable
             Task.Run(() => ReportBugAsync($"{DolphinToolExeName} not found in the application directory. This will prevent the application from functioning correctly."));
         }
 
-        // 7z.dll check and library path setup
-        var sevenZipDllPath = Path.Combine(appDirectory, "7z.dll");
-        if (File.Exists(sevenZipDllPath))
-        {
-            SevenZipBase.SetLibraryPath(sevenZipDllPath);
-            _isSevenZipDllAvailable = true;
-            LogMessage("7z.dll found. .7z and .rar extraction enabled via SevenZipSharp library.");
-        }
-        else
-        {
-            _isSevenZipDllAvailable = false;
-            LogMessage("WARNING: 7z.dll not found. .7z and .rar extraction will be disabled.");
-        }
-
         ResetOperationStats();
+        Loaded += MainWindow_Loaded;
+    }
+
+    private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Check for updates on startup in the background
+            await CheckForUpdatesAsync(false);
+        }
+        catch (Exception ex)
+        {
+            _ = ReportBugAsync("Error during startup", ex);
+        }
     }
 
     private void Window_Closing(object sender, CancelEventArgs e)
@@ -665,16 +665,7 @@ public partial class MainWindow : IDisposable
 
             switch (extension)
             {
-                case ".zip":
-                    await Task.Run(() => ZipFile.ExtractToDirectory(archivePath, tempDir, true), _cts.Token);
-                    break;
-
-                case ".7z" or ".rar":
-                    if (!_isSevenZipDllAvailable)
-                    {
-                        return (false, string.Empty, tempDir, $"7z.dll not found. Cannot extract {extension} files.");
-                    }
-
+                case ".zip" or ".7z" or ".rar":
                     await Task.Run(() =>
                     {
                         using var extractor = new SevenZipExtractor(archivePath);
@@ -822,6 +813,83 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    private async void CheckForUpdatesMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await CheckForUpdatesAsync(true);
+        }
+        catch (Exception ex)
+        {
+            _ = _bugReportService.SendBugReportAsync($"Error checking for updates: {ex.Message}");
+        }
+    }
+
+    private async Task CheckForUpdatesAsync(bool isManualCheck)
+    {
+        LogMessage("Checking for updates...");
+        try
+        {
+            var (isUpdateAvailable, latestRelease) = await _updateService.CheckForUpdatesAsync();
+
+            if (isUpdateAvailable && latestRelease != null)
+            {
+                LogMessage($"New version available: {latestRelease.Name}");
+                var currentVersion = Assembly.GetExecutingAssembly().GetName().Version;
+                var message = $"A new version ({latestRelease.Name}) is available!\n" +
+                              $"You are currently using version {currentVersion}.\n\n" +
+                              $"Release Notes:\n{latestRelease.Body}\n\n" +
+                              "Would you like to go to the download page?";
+
+                var result = MessageBox.Show(this, message, "Update Available", MessageBoxButton.YesNo, MessageBoxImage.Information);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    OpenUrl(latestRelease.HtmlUrl);
+                }
+            }
+            else
+            {
+                LogMessage("You are using the latest version.");
+                if (isManualCheck)
+                {
+                    MessageBox.Show(this, "You are already using the latest version.", "No Updates Found", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            var errorMessage = $"Error checking for updates: {ex.Message}";
+            LogMessage(errorMessage);
+            if (isManualCheck)
+            {
+                MessageBox.Show(this, $"An error occurred while checking for updates:\n{ex.Message}", "Update Check Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+
+            await ReportBugAsync("Failed to check for updates", ex);
+        }
+    }
+
+    private void OpenUrl(string url)
+    {
+        try
+        {
+            var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+            process?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            var errorMessage = $"Error opening URL: {url}. Exception: {ex.Message}";
+            LogMessage(errorMessage);
+            _ = _bugReportService.SendBugReportAsync(errorMessage);
+            MessageBox.Show($"Unable to open link: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private void ClearProgressDisplay()
     {
         Application.Current.Dispatcher.InvokeAsync(() =>
@@ -837,6 +905,7 @@ public partial class MainWindow : IDisposable
         _cts?.Cancel();
         _cts?.Dispose();
         _bugReportService?.Dispose();
+        _updateService?.Dispose();
         _operationTimer?.Stop();
         GC.SuppressFinalize(this);
     }

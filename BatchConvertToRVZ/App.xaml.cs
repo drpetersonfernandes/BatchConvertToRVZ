@@ -1,6 +1,9 @@
 ﻿using System.Globalization;
+using System.IO;
 using System.Text;
+using System.Windows;
 using System.Windows.Threading;
+using SevenZip;
 
 namespace BatchConvertToRVZ;
 
@@ -22,6 +25,57 @@ public partial class App : IDisposable
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
         DispatcherUnhandledException += App_DispatcherUnhandledException;
         TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
+
+        // Initialize SevenZipSharp library path
+        InitializeSevenZipSharp();
+
+        // Register the Exit event handler
+        Exit += App_Exit;
+    }
+
+    private void App_Exit(object sender, ExitEventArgs e)
+    {
+        // Dispose of the shared BugReportService instance
+        _bugReportService?.Dispose();
+
+        // Unregister event handlers to prevent memory leaks
+        AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
+        DispatcherUnhandledException -= App_DispatcherUnhandledException;
+        TaskScheduler.UnobservedTaskException -= TaskScheduler_UnobservedTaskException;
+    }
+
+    private void InitializeSevenZipSharp()
+    {
+        try
+        {
+            // Determine the path to the 7z dll based on the process architecture.
+            var dllName = Environment.Is64BitProcess ? "7z_x64.dll" : "7z_x86.dll";
+            var dllPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, dllName);
+
+            if (File.Exists(dllPath))
+            {
+                SevenZipBase.SetLibraryPath(dllPath);
+            }
+            else
+            {
+                // Notify developer
+                // If the specific DLL is not found, log an error. Extraction will likely fail.
+                var errorMessage = $"Could not find the required 7-Zip library: {dllName} in {AppDomain.CurrentDomain.BaseDirectory}";
+
+                if (_bugReportService != null)
+                {
+                    _ = _bugReportService.SendBugReportAsync(errorMessage);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Notify developer
+            if (_bugReportService != null)
+            {
+                _ = _bugReportService.SendBugReportAsync(ex.Message);
+            }
+        }
     }
 
     private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
