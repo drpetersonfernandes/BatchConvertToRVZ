@@ -88,6 +88,8 @@ public partial class MainWindow : IDisposable
             Task.Run(() => ReportBugAsync($"{DolphinToolExeName} not found in the application directory. This will prevent the application from functioning correctly."));
         }
 
+        LogMessage("");
+
         ResetOperationStats();
         Loaded += MainWindow_Loaded;
     }

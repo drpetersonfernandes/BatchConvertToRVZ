@@ -3,9 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="About Batch Convert to RVZ"
         Width="450"
-        Height="500"
+        Height="450"
         ResizeMode="NoResize"
-        WindowStartupLocation="CenterOwner">
+        WindowStartupLocation="CenterScreen">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

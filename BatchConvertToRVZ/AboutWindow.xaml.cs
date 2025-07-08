@@ -34,12 +34,15 @@ public partial class AboutWindow
         catch (Exception ex)
         {
             // Notify developer
-            // Changed application name in BugReportService init
-            var bugReportService = new BugReportService(
-                "https://www.purelogiccode.com/bugreport/api/send-bug-report",
-                "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e",
-                "BatchConvertToRVZ");
-            _ = bugReportService.SendBugReportAsync($"Error opening URL: {e.Uri.AbsoluteUri}. Exception: {ex.Message}");
+            // FIX: Wrap the disposable service in a 'using' statement.
+            using (var bugReportService = new BugReportService(
+                       "https://www.purelogiccode.com/bugreport/api/send-bug-report",
+                       "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e",
+                       "BatchConvertToRVZ"))
+            {
+                _ = bugReportService.SendBugReportAsync(
+                    $"Error opening URL: {e.Uri.AbsoluteUri}. Exception: {ex.Message}");
+            }
 
             // Notify user
             MessageBox.Show($"Unable to open link: {ex.Message}",
