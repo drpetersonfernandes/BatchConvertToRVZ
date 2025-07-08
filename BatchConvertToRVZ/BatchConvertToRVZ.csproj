@@ -8,8 +8,8 @@
     <UseWPF>true</UseWPF>
     <ApplicationIcon>icon\icon.ico</ApplicationIcon> <!-- You might want a different icon -->
     <SupportedOSPlatformVersion>7.0</SupportedOSPlatformVersion>
-    <AssemblyVersion>1.0</AssemblyVersion> <!-- New version for this app -->
-    <FileVersion>1.0</FileVersion> <!-- New version for this app -->
+    <AssemblyVersion>1.1</AssemblyVersion> <!-- New version for this app -->
+    <FileVersion>1.1</FileVersion> <!-- New version for this app -->
     <IsPackable>false</IsPackable>
     <NeutralLanguage>en</NeutralLanguage>
     <AssemblyName>BatchConvertToRVZ</AssemblyName> <!-- Explicitly set assembly name -->

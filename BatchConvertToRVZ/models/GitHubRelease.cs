@@ -1,6 +1,6 @@
 ﻿using System.Text.Json.Serialization;
 
-namespace BatchConvertToRVZ;
+namespace BatchConvertToRVZ.models;
 
 /// <summary>
 /// Represents the structure of a GitHub release JSON response.
