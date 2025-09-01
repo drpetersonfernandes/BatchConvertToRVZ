@@ -110,14 +110,23 @@ public partial class MainWindow : IDisposable
 
     private string GetDolphinToolExecutableName()
     {
-        var architecture = RuntimeInformation.ProcessArchitecture;
-        // ReSharper disable once SwitchExpressionHandlesSomeKnownEnumValuesWithExceptionInDefault
-        return architecture switch
+        try
         {
-            Architecture.X64 => "DolphinTool.exe",
-            Architecture.Arm64 => "DolphinTool_arm64.exe",
-            _ => throw new PlatformNotSupportedException($"Unsupported architecture: {architecture}")
-        };
+            var architecture = RuntimeInformation.ProcessArchitecture;
+            // ReSharper disable once SwitchExpressionHandlesSomeKnownEnumValuesWithExceptionInDefault
+            return architecture switch
+            {
+                Architecture.X64 => "DolphinTool.exe",
+                Architecture.Arm64 => "DolphinTool_arm64.exe",
+                _ => throw new PlatformNotSupportedException($"Unsupported architecture: {architecture}")
+            };
+        }
+        catch (Exception ex)
+        {
+            _ = ReportBugAsync("Error in method GetDolphinToolExecutableName", ex);
+        }
+
+        return "DolphinTool.exe";
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
