@@ -1,5 +1,6 @@
 ﻿using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
@@ -48,8 +49,27 @@ public partial class App : IDisposable
     {
         try
         {
-            // Determine the path to the 7z dll based on the process architecture.
-            var dllName = Environment.Is64BitProcess ? "7z_x64.dll" : "7z_x86.dll";
+            string dllName;
+            switch (RuntimeInformation.ProcessArchitecture)
+            {
+                case Architecture.X64:
+                    dllName = "7z_x64.dll";
+                    break;
+                case Architecture.Arm64:
+                    dllName = "7z_arm64.dll";
+                    break;
+                default:
+                {
+                    var errorMessage = $"Unsupported processor architecture: {RuntimeInformation.ProcessArchitecture}. Only x64 and ARM64 are supported.";
+                    if (_bugReportService != null)
+                    {
+                        _ = _bugReportService.SendBugReportAsync(errorMessage);
+                    }
+
+                    return;
+                }
+            }
+
             var dllPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, dllName);
 
             if (File.Exists(dllPath))
@@ -60,7 +80,8 @@ public partial class App : IDisposable
             {
                 // Notify developer
                 // If the specific DLL is not found, log an error. Extraction will likely fail.
-                var errorMessage = $"Could not find the required 7-Zip library: {dllName} in {AppDomain.CurrentDomain.BaseDirectory}";
+                var errorMessage =
+                    $"Could not find the required 7-Zip library: {dllName} in {AppDomain.CurrentDomain.BaseDirectory}";
 
                 if (_bugReportService != null)
                 {

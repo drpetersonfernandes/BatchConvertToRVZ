@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using Microsoft.Win32;
@@ -26,7 +27,6 @@ public partial class MainWindow : IDisposable
     private int _currentDegreeOfParallelismForFiles = 1;
 
     // DolphinTool specific constants
-    private const string DolphinToolExeName = "DolphinTool.exe";
     private const string RvzCompressionMethod = "zstd"; // Default compression method
     private const int RvzCompressionLevel = 5; // Default compression level
     private const int RvzBlockSize = 131072; // Default block size
@@ -68,30 +68,56 @@ public partial class MainWindow : IDisposable
         LogMessage("Welcome to the Batch Convert to RVZ.");
         LogMessage("");
         LogMessage("This program will convert GameCube/Wii ISO files (.iso) to RVZ format.");
-        LogMessage("It also supports extracting ISOs from ZIP, 7Z, and RAR archives."); // Updated welcome message
+        LogMessage("It also supports extracting ISOs from ZIP, 7Z, and RAR archives.");
         LogMessage("");
         LogMessage("Use the 'Convert' tab to convert ISO files or archives to RVZ.");
         LogMessage("Use the 'Verify Integrity' tab to check your existing RVZ files.");
         LogMessage("");
 
         var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
-        var dolphinToolPath = Path.Combine(appDirectory, DolphinToolExeName);
+        string dolphinToolExeName;
+
+        try
+        {
+            dolphinToolExeName = GetDolphinToolExecutableName();
+        }
+        catch (PlatformNotSupportedException ex)
+        {
+            LogMessage($"ERROR: {ex.Message}");
+            ShowError($"Unsupported platform architecture. {ex.Message}");
+            Task.Run(() => ReportBugAsync($"Unsupported platform: {ex.Message}"));
+            dolphinToolExeName = "DolphinTool.exe"; // fallback
+        }
+
+        var dolphinToolPath = Path.Combine(appDirectory, dolphinToolExeName);
 
         if (File.Exists(dolphinToolPath))
         {
-            LogMessage($"{DolphinToolExeName} found in the application directory.");
+            LogMessage($"{dolphinToolExeName} found in the application directory.");
         }
         else
         {
-            LogMessage($"WARNING: {DolphinToolExeName} not found in the application directory!");
-            LogMessage($"Please ensure {DolphinToolExeName} is in the same folder as this application.");
-            Task.Run(() => ReportBugAsync($"{DolphinToolExeName} not found in the application directory. This will prevent the application from functioning correctly."));
+            LogMessage($"WARNING: {dolphinToolExeName} not found in the application directory!");
+            LogMessage($"Please ensure {dolphinToolExeName} is in the same folder as this application.");
+            Task.Run(() => ReportBugAsync($"{dolphinToolExeName} not found in the application directory. This will prevent the application from functioning correctly."));
         }
 
         LogMessage("");
 
         ResetOperationStats();
         Loaded += MainWindow_Loaded;
+    }
+
+    private string GetDolphinToolExecutableName()
+    {
+        var architecture = RuntimeInformation.ProcessArchitecture;
+        // ReSharper disable once SwitchExpressionHandlesSomeKnownEnumValuesWithExceptionInDefault
+        return architecture switch
+        {
+            Architecture.X64 => "DolphinTool.exe",
+            Architecture.Arm64 => "DolphinTool_arm64.exe",
+            _ => throw new PlatformNotSupportedException($"Unsupported architecture: {architecture}")
+        };
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -147,14 +173,28 @@ public partial class MainWindow : IDisposable
         try
         {
             var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
-            var dolphinToolPath = Path.Combine(appDirectory, DolphinToolExeName);
+            string dolphinToolExeName;
+
+            try
+            {
+                dolphinToolExeName = GetDolphinToolExecutableName();
+            }
+            catch (PlatformNotSupportedException ex)
+            {
+                LogMessage($"ERROR: {ex.Message}");
+                ShowError($"Unsupported platform architecture. {ex.Message}");
+                await ReportBugAsync($"Unsupported platform during conversion: {ex.Message}");
+                return;
+            }
+
+            var dolphinToolPath = Path.Combine(appDirectory, dolphinToolExeName);
 
             if (!File.Exists(dolphinToolPath))
             {
-                LogMessage($"Error: {DolphinToolExeName} not found in the application folder.");
-                ShowError($"{DolphinToolExeName} is missing from the application folder. Please ensure it's in the same directory as this application.");
-                await ReportBugAsync($"{DolphinToolExeName} not found when trying to start conversion",
-                    new FileNotFoundException($"The required {DolphinToolExeName} file was not found.", dolphinToolPath));
+                LogMessage($"Error: {dolphinToolExeName} not found in the application folder.");
+                ShowError($"{dolphinToolExeName} is missing from the application folder. Please ensure it's in the same directory as this application.");
+                await ReportBugAsync($"{dolphinToolExeName} not found when trying to start conversion",
+                    new FileNotFoundException($"The required {dolphinToolExeName} file was not found.", dolphinToolPath));
                 return;
             }
 
@@ -202,7 +242,7 @@ public partial class MainWindow : IDisposable
             _operationTimer.Restart();
 
             LogMessage("Starting batch conversion process...");
-            LogMessage($"Using {DolphinToolExeName}: {dolphinToolPath}");
+            LogMessage($"Using {dolphinToolExeName}: {dolphinToolPath}");
             LogMessage($"Input folder: {inputFolder}");
             LogMessage($"Output folder: {outputFolder}");
             LogMessage($"Delete original files: {deleteFiles}");
@@ -926,14 +966,28 @@ public partial class MainWindow : IDisposable
         try
         {
             var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
-            var dolphinToolPath = Path.Combine(appDirectory, DolphinToolExeName);
+            string dolphinToolExeName;
+
+            try
+            {
+                dolphinToolExeName = GetDolphinToolExecutableName();
+            }
+            catch (PlatformNotSupportedException ex)
+            {
+                LogMessage($"ERROR: {ex.Message}");
+                ShowError($"Unsupported platform architecture. {ex.Message}");
+                await ReportBugAsync($"Unsupported platform during verification: {ex.Message}");
+                return;
+            }
+
+            var dolphinToolPath = Path.Combine(appDirectory, dolphinToolExeName);
 
             if (!File.Exists(dolphinToolPath))
             {
-                LogMessage($"Error: {DolphinToolExeName} not found in the application folder.");
-                ShowError($"{DolphinToolExeName} is missing from the application folder. Please ensure it's in the same directory as this application.");
-                await ReportBugAsync($"{DolphinToolExeName} not found when trying to start verification",
-                    new FileNotFoundException($"The required {DolphinToolExeName} file was not found.", dolphinToolPath));
+                LogMessage($"Error: {dolphinToolExeName} not found in the application folder.");
+                ShowError($"{dolphinToolExeName} is missing from the application folder. Please ensure it's in the same directory as this application.");
+                await ReportBugAsync($"{dolphinToolExeName} not found when trying to start verification",
+                    new FileNotFoundException($"The required {dolphinToolExeName} file was not found.", dolphinToolPath));
                 return;
             }
 
@@ -959,7 +1013,7 @@ public partial class MainWindow : IDisposable
             _operationTimer.Restart();
 
             LogMessage("Starting batch verification process...");
-            LogMessage($"Using {DolphinToolExeName}: {dolphinToolPath}");
+            LogMessage($"Using {dolphinToolExeName}: {dolphinToolPath}");
             LogMessage($"Verification folder: {verifyFolder}");
             if (_moveFailedFiles) LogMessage("Failed files will be moved to '_Failed' subfolder.");
             if (_moveSuccessFiles) LogMessage("Successful files will be moved to '_Success' subfolder.");

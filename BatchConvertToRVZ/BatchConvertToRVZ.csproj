@@ -26,6 +26,12 @@
     <Resource Include="images\logo.png" />
     <None Remove="images\update.png" />
     <Resource Include="images\update.png" />
+    <None Update="7z_arm64.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="DolphinTool_arm64.exe">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
@@ -34,9 +40,6 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="7z_x64.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="7z_x86.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <!-- Removed chdman.exe and 7z files -->
