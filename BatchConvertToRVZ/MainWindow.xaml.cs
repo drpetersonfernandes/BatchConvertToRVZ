@@ -14,6 +14,8 @@ namespace BatchConvertToRVZ;
 
 public partial class MainWindow : IDisposable
 {
+    private bool _processSmallerFilesFirst;
+
     private CancellationTokenSource _cts;
     private readonly BugReportService _bugReportService;
     private readonly UpdateService _updateService;
@@ -211,6 +213,7 @@ public partial class MainWindow : IDisposable
             var outputFolder = OutputFolderTextBox.Text;
             var deleteFiles = DeleteFilesCheckBox.IsChecked ?? false;
             var useParallelFileProcessing = ParallelProcessingCheckBox.IsChecked ?? false;
+            _processSmallerFilesFirst = ProcessSmallerFilesFirstCheckBox.IsChecked ?? true;
 
             _currentDegreeOfParallelismForFiles = useParallelFileProcessing ? 3 : 1;
 
@@ -257,6 +260,7 @@ public partial class MainWindow : IDisposable
             LogMessage($"Delete original files: {deleteFiles}");
             LogMessage($"Parallel file processing: {useParallelFileProcessing} (Max concurrency: {_currentDegreeOfParallelismForFiles})");
             LogMessage($"RVZ Compression: Method={RvzCompressionMethod}, Level={RvzCompressionLevel}, Block Size={RvzBlockSize}");
+            LogMessage($"Process smaller files first: {_processSmallerFilesFirst}");
 
             try
             {
@@ -340,6 +344,26 @@ public partial class MainWindow : IDisposable
             var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
                 .Where(file => AllSupportedInputExtensions.Contains(Path.GetExtension(file).ToLowerInvariant()))
                 .ToArray();
+
+            // Add sorting by file size if the option is enabled
+            if (_processSmallerFilesFirst)
+            {
+                LogMessage("Sorting files by size (smallest first)...");
+                Array.Sort(files, (x, y) =>
+                {
+                    try
+                    {
+                        var xInfo = new FileInfo(x);
+                        var yInfo = new FileInfo(y);
+                        return xInfo.Length.CompareTo(yInfo.Length);
+                    }
+                    catch
+                    {
+                        // If we can't get file info, maintain original order
+                        return 0;
+                    }
+                });
+            }
 
             _totalFilesToProcess = files.Length;
             UpdateStatsDisplay();

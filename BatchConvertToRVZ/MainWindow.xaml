@@ -77,6 +77,12 @@
                               Margin="10,5,10,5"
                               HorizontalAlignment="Left"
                               IsChecked="False"/>
+                    
+                    <CheckBox x:Name="ProcessSmallerFilesFirstCheckBox"
+                              Content="Process smaller files first"
+                              Margin="10,5,10,5"
+                              HorizontalAlignment="Left"
+                              IsChecked="False"/>
 
                     <!-- Start Conversion Button -->
                     <Button x:Name="StartConversionButton"
