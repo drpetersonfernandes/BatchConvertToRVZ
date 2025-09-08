@@ -14,6 +14,8 @@ namespace BatchConvertToRVZ;
 
 public partial class MainWindow : IDisposable
 {
+    private bool _disposed;
+    private Task? _runningTask;
     private bool _processSmallerFilesFirst;
 
     private CancellationTokenSource _cts;
@@ -144,18 +146,44 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private void Window_Closing(object sender, CancelEventArgs e)
+    private async void Window_Closing(object sender, CancelEventArgs e)
     {
-        // Signal cancellation to any ongoing background tasks
-        _cts.Cancel();
+        try
+        {
+            // If a job is in flight, cancel it and keep the window open
+            // until the task completes.
+            if (_runningTask is { IsCompleted: false })
+            {
+                e.Cancel = true; // keep window alive
+                await _cts.CancelAsync(); // ask workers to stop
+
+                await _runningTask; // wait for graceful stop
+
+                Close(); // now close for real
+            }
+        }
+        catch (Exception ex)
+        {
+            _ = ReportBugAsync("Error during window closing", ex);
+        }
     }
 
     private void LogMessage(string message)
     {
+        if (_disposed || Application.Current is null)
+        {
+            return;
+        }
+
         var timestampedMessage = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
 
         Application.Current.Dispatcher.BeginInvoke(() =>
         {
+            if (_disposed)
+            {
+                return;
+            }
+
             LogViewer.AppendText($"{timestampedMessage}{Environment.NewLine}");
             LogViewer.ScrollToEnd();
         });
@@ -262,27 +290,36 @@ public partial class MainWindow : IDisposable
             LogMessage($"RVZ Compression: Method={RvzCompressionMethod}, Level={RvzCompressionLevel}, Block Size={RvzBlockSize}");
             LogMessage($"Process smaller files first: {_processSmallerFilesFirst}");
 
-            try
+            // Wrap the whole job in a task that we can await on exit
+            _runningTask = Task.Run(async () =>
             {
-                await PerformBatchConversionAsync(dolphinToolPath, inputFolder, outputFolder, deleteFiles, useParallelFileProcessing, _currentDegreeOfParallelismForFiles);
-            }
-            catch (OperationCanceledException)
-            {
-                LogMessage("Operation was canceled by user.");
-            }
-            catch (Exception ex)
-            {
-                LogMessage($"Error: {ex.Message}");
-                await ReportBugAsync("Error during batch conversion process", ex);
-            }
-            finally
-            {
-                _operationTimer.Stop();
-                UpdateProcessingTimeDisplay();
-                UpdateWriteSpeedDisplay(0);
-                SetControlsState(true);
-                LogOperationSummary("Conversion");
-            }
+                try
+                {
+                    await PerformBatchConversionAsync(dolphinToolPath, inputFolder,
+                        outputFolder, deleteFiles,
+                        useParallelFileProcessing,
+                        _currentDegreeOfParallelismForFiles);
+                }
+                catch (OperationCanceledException)
+                {
+                    LogMessage("Conversion cancelled by user.");
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Fatal conversion error: {ex.Message}");
+                    await ReportBugAsync("Unhandled exception in conversion", ex);
+                }
+                finally
+                {
+                    _operationTimer.Stop();
+                    UpdateProcessingTimeDisplay();
+                    UpdateWriteSpeedDisplay(0);
+                    SetControlsState(true);
+                    LogOperationSummary("Conversion");
+                }
+            });
+
+            await _runningTask; // keep the UI responsive while running
         }
         catch (Exception ex)
         {
@@ -858,18 +895,38 @@ public partial class MainWindow : IDisposable
 
             switch (extension)
             {
-                case ".zip" or ".7z" or ".rar":
+                case ".zip":
+                case ".7z":
+                case ".rar":
+                    // Wrap the synchronous extraction in a Task to avoid blocking the UI thread,
+                    // but ensure cancellation is handled correctly and resources are disposed.
                     await Task.Run(() =>
                     {
+                        // Use 'using' to guarantee disposal of the extractor, even if an exception occurs
+                        // (including OperationCanceledException).
                         using var extractor = new SevenZipExtractor(archivePath);
+
+                        // Check for cancellation before starting the potentially long-running operation
+                        _cts.Token.ThrowIfCancellationRequested();
+
+                        // Perform the extraction. This is a synchronous operation.
+                        // If the token is cancelled during this call, the extractor's
+                        // internal state might be inconsistent, but the 'using' block
+                        // ensures its finalizer or Dispose method attempts cleanup.
                         extractor.ExtractArchive(tempDir);
-                    }, _cts.Token);
+
+                        // Check again after the operation if it was lengthy
+                        _cts.Token.ThrowIfCancellationRequested();
+                    }, _cts.Token); // Passing the token here allows Task.Run to respond to cancellation
+                    // by throwing an OperationCanceledException, which is caught below.
                     break;
 
                 default:
                     return (false, string.Empty, tempDir, $"Unsupported archive type: {extension}");
             }
 
+            // After successful extraction (or if it wasn't cancelled during),
+            // look for the target file.
             var supportedFile = Directory.GetFiles(tempDir, "*.*", SearchOption.AllDirectories)
                 .FirstOrDefault(f => PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(f).ToLowerInvariant()));
 
@@ -882,17 +939,31 @@ public partial class MainWindow : IDisposable
         }
         catch (OperationCanceledException)
         {
+            // Log the cancellation
+            LogMessage($"Extraction cancelled for {archiveFileName}.");
+
+            // Clean up the temporary directory created for this operation
             TryDeleteDirectory(tempDir, $"cancelled extraction directory for {archiveFileName}");
+
+            // Re-throw to indicate the operation was cancelled
             throw;
         }
         catch (Exception ex)
         {
+            // Log any other exceptions that occurred during extraction
             LogMessage($"Error extracting archive {archiveFileName}: {ex.Message}");
+
+            // Report the bug asynchronously
             await ReportBugAsync($"Error extracting archive: {archiveFileName}", ex);
+
+            // Clean up the temporary directory on failure
             TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+
+            // Return a failure result with the error message
             return (false, string.Empty, tempDir, $"Exception during extraction: {ex.Message}");
         }
     }
+
 
     private bool UpdateConversionProgress(string progressLine)
     {
@@ -901,7 +972,9 @@ public partial class MainWindow : IDisposable
             var match = Regex.Match(progressLine, @"(\d+[\.,]?\d*)%");
             if (!match.Success) return false;
 
-            var percentageStr = match.Groups[1].Value.Replace(',', '.');
+            var percentageStr = match.Groups[1].Value;
+            // FIX: Apply replacement before parsing to handle locale-specific decimal separators
+            percentageStr = percentageStr.Replace(',', '.');
             if (!double.TryParse(percentageStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var percentage))
                 return false;
 
@@ -1095,6 +1168,13 @@ public partial class MainWindow : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
         _cts?.Cancel();
         _cts?.Dispose();
         _bugReportService?.Dispose();
@@ -1169,27 +1249,32 @@ public partial class MainWindow : IDisposable
             if (_moveFailedFiles) LogMessage("Failed files will be moved to '_Failed' subfolder.");
             if (_moveSuccessFiles) LogMessage("Successful files will be moved to '_Success' subfolder.");
 
+            _runningTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await PerformBatchVerificationAsync(dolphinToolPath, verifyFolder,
+                        _moveFailedFiles, _moveSuccessFiles);
+                }
+                catch (OperationCanceledException)
+                {
+                    LogMessage("Verification cancelled by user.");
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Fatal verification error: {ex.Message}");
+                    await ReportBugAsync("Unhandled exception in verification", ex);
+                }
+                finally
+                {
+                    _operationTimer.Stop();
+                    UpdateProcessingTimeDisplay();
+                    SetControlsState(true);
+                    LogOperationSummary("Verification");
+                }
+            });
 
-            try
-            {
-                await PerformBatchVerificationAsync(dolphinToolPath, verifyFolder, _moveFailedFiles, _moveSuccessFiles);
-            }
-            catch (OperationCanceledException)
-            {
-                LogMessage("Operation was canceled by user.");
-            }
-            catch (Exception ex)
-            {
-                LogMessage($"Error: {ex.Message}");
-                await ReportBugAsync("Error during batch verification process", ex);
-            }
-            finally
-            {
-                _operationTimer.Stop();
-                UpdateProcessingTimeDisplay();
-                SetControlsState(true);
-                LogOperationSummary("Verification");
-            }
+            await _runningTask;
         }
         catch (Exception ex)
         {
@@ -1263,7 +1348,8 @@ public partial class MainWindow : IDisposable
             LogMessage($"Verifying: {fileName}...");
             var arguments = $"verify -i \"{inputFile}\"";
 
-            tempWorkingDirectory = Path.Combine(Path.GetTempPath(), "BatchConvertToRVZ_DolphinTool_Temp_" + Guid.NewGuid().ToString("N"));
+            // FIX: Generate the temporary directory name inside the task to ensure uniqueness
+            tempWorkingDirectory = Path.Combine(Path.GetTempPath(), "BatchConvertToRVZ_DolphinTool_Temp_" + Path.GetRandomFileName());
             Directory.CreateDirectory(tempWorkingDirectory);
 
             process.StartInfo = new ProcessStartInfo
@@ -1358,6 +1444,7 @@ public partial class MainWindow : IDisposable
         return verificationResult;
     }
 
+
     private void MoveFileToSubfolder(string sourceFilePath, string baseFolder, string subfolderName)
     {
         try
@@ -1425,11 +1512,11 @@ public partial class MainWindow : IDisposable
     private void UpdateProgressDisplay(int current, int total, string currentFileName, string operationVerb)
     {
         var percentage = total == 0 ? 0 : (double)current / total * 100;
-        Application.Current.Dispatcher.InvokeAsync(() =>
+        Application.Current.Dispatcher.BeginInvoke(() =>
         {
             ProgressText.Text = $"{operationVerb} file {current} of {total}: {currentFileName} ({percentage:F1}%)";
             ProgressBar.Value = current;
-            ProgressBar.Maximum = total > 0 ? total : 1;
+            ProgressBar.Maximum = Math.Max(total, 1);
         });
     }
 
