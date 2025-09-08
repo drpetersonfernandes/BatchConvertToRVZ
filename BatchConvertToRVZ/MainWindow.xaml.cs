@@ -473,10 +473,14 @@ public partial class MainWindow : IDisposable
 
             if (isArchiveFile)
             {
+                // Small delay before deleting original archive
+                await Task.Delay(50, _cts.Token);
                 TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}");
             }
             else
             {
+                // Small delay before deleting original ISO
+                await Task.Delay(50, _cts.Token);
                 TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}");
             }
 
@@ -488,6 +492,8 @@ public partial class MainWindow : IDisposable
             var potentialOutputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
             if (File.Exists(potentialOutputFile))
             {
+                // Additional delay for cancellation scenario
+                await Task.Delay(200, CancellationToken.None);
                 TryDeleteFile(potentialOutputFile, "partially created RVZ file after cancellation");
             }
 
@@ -500,6 +506,8 @@ public partial class MainWindow : IDisposable
             var potentialOutputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
             if (File.Exists(potentialOutputFile))
             {
+                // Small delay before attempting deletion
+                await Task.Delay(100, CancellationToken.None);
                 TryDeleteFile(potentialOutputFile, "partially created RVZ file after error");
             }
 
@@ -509,6 +517,8 @@ public partial class MainWindow : IDisposable
         {
             if (isArchiveFile && !string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
             {
+                // Small delay before cleaning up temp directory
+                await Task.Delay(100, CancellationToken.None);
                 TryDeleteDirectory(tempDir, "temporary extraction directory");
             }
         }
@@ -583,29 +593,14 @@ public partial class MainWindow : IDisposable
                             // Try graceful termination first
                             process.Kill(true);
 
-                            // Wait for up to 5 seconds for a graceful exit
-                            var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                            try
+                            // Give it a moment to exit gracefully
+                            await Task.Delay(150, CancellationToken.None);
+
+                            // If still running, force kill
+                            if (!process.HasExited)
                             {
-                                await process.WaitForExitAsync(waitCts.Token);
-                            }
-                            catch (OperationCanceledException)
-                            {
-                                // Timeout occurred, force kill if still running
-                                if (!process.HasExited)
-                                {
-                                    process.Kill();
-                                    // Wait for up to 2 seconds for force kill
-                                    var forceWaitCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                                    try
-                                    {
-                                        await process.WaitForExitAsync(forceWaitCts.Token);
-                                    }
-                                    catch (OperationCanceledException)
-                                    {
-                                        LogMessage($"Process for {Path.GetFileName(inputFile)} did not exit even after force kill");
-                                    }
-                                }
+                                process.Kill();
+                                await Task.Delay(100, CancellationToken.None);
                             }
                         }
                     }
@@ -650,7 +645,17 @@ public partial class MainWindow : IDisposable
                 }
             }
 
-            await process.WaitForExitAsync(_cts.Token);
+            // Wait for process exit with cancellation token
+            try
+            {
+                await process.WaitForExitAsync(_cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Handle cancellation during wait
+                LogMessage($"Process wait cancelled for {Path.GetFileName(inputFile)}");
+                throw;
+            }
 
             LogMessage($"DolphinTool raw output for {Path.GetFileName(inputFile)}: {outputBuilder}");
             if (errorBuilder.Length > 0 && process.ExitCode != 0) LogMessage($"DolphinTool raw error for {Path.GetFileName(inputFile)}: {errorBuilder}");
@@ -662,8 +667,8 @@ public partial class MainWindow : IDisposable
             LogMessage($"Conversion cancelled for {Path.GetFileName(inputFile)}.");
             if (File.Exists(outputFile))
             {
-                // Small delay to allow file handles to be released
-                await Task.Delay(100, CancellationToken.None);
+                // Additional delay to ensure process has fully released the file
+                await Task.Delay(200, CancellationToken.None);
                 TryDeleteFile(outputFile, "partially created RVZ file after cancellation");
             }
 
@@ -675,6 +680,8 @@ public partial class MainWindow : IDisposable
             await ReportBugAsync($"Error converting file: {Path.GetFileName(inputFile)}", ex);
             if (File.Exists(outputFile))
             {
+                // Small delay before attempting deletion
+                await Task.Delay(100, CancellationToken.None);
                 TryDeleteFile(outputFile, "partially created RVZ file after error");
             }
 
@@ -683,8 +690,10 @@ public partial class MainWindow : IDisposable
         finally
         {
             UpdateWriteSpeedDisplay(0);
+            // Process disposal is handled by 'using' statement
         }
     }
+
 
     private void TryDeleteFile(string filePath, string description)
     {
@@ -692,32 +701,80 @@ public partial class MainWindow : IDisposable
         {
             if (!File.Exists(filePath)) return;
 
-            // Try multiple times with increasing delays
-            for (var attempt = 0; attempt < 5; attempt++)
+            // Try multiple times with increasing delays and different approaches
+            for (var attempt = 0; attempt < 10; attempt++) // Increased to 10 attempts
             {
                 try
                 {
+                    // First check if file is locked by trying to open it
+                    try
+                    {
+                        using (new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                        {
+                            // If we can open it exclusively, we can delete it
+                        }
+                    }
+                    catch (IOException)
+                    {
+                        // File is locked, wait and retry
+                        if (attempt < 9) // Don't log on the last attempt
+                        {
+                            var delay = 50 * (attempt + 1); // 50ms, 100ms, 150ms, ..., 500ms
+                            LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
+                            Thread.Sleep(delay);
+                            continue;
+                        }
+                    }
+
+                    // Try to remove read-only attribute if it exists
                     var attributes = File.GetAttributes(filePath);
                     if ((attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
                     {
                         File.SetAttributes(filePath, attributes & ~FileAttributes.ReadOnly);
                     }
 
+                    // Finally, try to delete the file
                     File.Delete(filePath);
                     LogMessage($"Deleted {description}: {Path.GetFileName(filePath)}");
                     return;
                 }
-                catch (IOException ioEx) when (ioEx.Message.Contains("being used by another process"))
+                catch (IOException ioEx) when (ioEx.Message.Contains("being used by another process") ||
+                                               ioEx.Message.Contains("The process cannot access the file"))
                 {
-                    if (attempt < 4) // Don't log on the last attempt
+                    if (attempt < 9) // Don't log on the last attempt
                     {
-                        LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/5. Waiting...");
-                        Thread.Sleep(100 * (attempt + 1)); // Increasing delay: 100ms, 200ms, 300ms, 400ms
+                        var delay = 100 * (attempt + 1); // 100ms, 200ms, 300ms, ..., 1000ms
+                        LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
+                        Thread.Sleep(delay);
                     }
                     else
                     {
-                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 5 attempts: {ioEx.Message}");
+                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts: {ioEx.Message}");
                         Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)} after multiple attempts", ioEx));
+                    }
+                }
+                catch (UnauthorizedAccessException authEx)
+                {
+                    // Try to reset file attributes
+                    try
+                    {
+                        File.SetAttributes(filePath, FileAttributes.Normal);
+                    }
+                    catch
+                    {
+                        // Ignore errors when trying to reset attributes
+                    }
+
+                    if (attempt < 9)
+                    {
+                        var delay = 150 * (attempt + 1);
+                        LogMessage($"Access denied for {Path.GetFileName(filePath)}. Attempt {attempt + 1}/10. Waiting {delay}ms...");
+                        Thread.Sleep(delay);
+                    }
+                    else
+                    {
+                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts due to access denied: {authEx.Message}");
+                        Task.Run(() => ReportBugAsync($"Access denied when deleting {description}: {Path.GetFileName(filePath)} after multiple attempts", authEx));
                     }
                 }
                 catch (Exception ex)
