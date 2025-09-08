@@ -516,7 +516,7 @@ public partial class MainWindow : IDisposable
 
     private async Task<bool> ConvertToRvzAsync(string dolphinToolPath, string inputFile, string outputFile)
     {
-        var process = new Process();
+        using var process = new Process();
         try
         {
             LogMessage($"Converting '{Path.GetFileName(inputFile)}' to '{Path.GetFileName(outputFile)}'...");
@@ -549,7 +549,10 @@ public partial class MainWindow : IDisposable
             };
             process.ErrorDataReceived += (_, args) =>
             {
-                if (string.IsNullOrEmpty(args.Data)) return;
+                if (string.IsNullOrEmpty(args.Data))
+                {
+                    return;
+                }
 
                 errorBuilder.AppendLine(args.Data);
                 if (!UpdateConversionProgress(args.Data))
@@ -575,11 +578,40 @@ public partial class MainWindow : IDisposable
                 {
                     try
                     {
-                        if (!process.HasExited) process.Kill(true);
+                        if (!process.HasExited)
+                        {
+                            // Try graceful termination first
+                            process.Kill(true);
+
+                            // Wait for up to 5 seconds for a graceful exit
+                            var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                            try
+                            {
+                                await process.WaitForExitAsync(waitCts.Token);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                // Timeout occurred, force kill if still running
+                                if (!process.HasExited)
+                                {
+                                    process.Kill();
+                                    // Wait for up to 2 seconds for force kill
+                                    var forceWaitCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                                    try
+                                    {
+                                        await process.WaitForExitAsync(forceWaitCts.Token);
+                                    }
+                                    catch (OperationCanceledException)
+                                    {
+                                        LogMessage($"Process for {Path.GetFileName(inputFile)} did not exit even after force kill");
+                                    }
+                                }
+                            }
+                        }
                     }
-                    catch
+                    catch (Exception killEx)
                     {
-                        /* ignore */
+                        LogMessage($"Error killing process for {Path.GetFileName(inputFile)}: {killEx.Message}");
                     }
 
                     _cts.Token.ThrowIfCancellationRequested();
@@ -630,6 +662,8 @@ public partial class MainWindow : IDisposable
             LogMessage($"Conversion cancelled for {Path.GetFileName(inputFile)}.");
             if (File.Exists(outputFile))
             {
+                // Small delay to allow file handles to be released
+                await Task.Delay(100, CancellationToken.None);
                 TryDeleteFile(outputFile, "partially created RVZ file after cancellation");
             }
 
@@ -649,7 +683,6 @@ public partial class MainWindow : IDisposable
         finally
         {
             UpdateWriteSpeedDisplay(0);
-            process?.Dispose();
         }
     }
 
@@ -659,21 +692,49 @@ public partial class MainWindow : IDisposable
         {
             if (!File.Exists(filePath)) return;
 
-            var attributes = File.GetAttributes(filePath);
-            if ((attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+            // Try multiple times with increasing delays
+            for (var attempt = 0; attempt < 5; attempt++)
             {
-                File.SetAttributes(filePath, attributes & ~FileAttributes.ReadOnly);
-            }
+                try
+                {
+                    var attributes = File.GetAttributes(filePath);
+                    if ((attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+                    {
+                        File.SetAttributes(filePath, attributes & ~FileAttributes.ReadOnly);
+                    }
 
-            File.Delete(filePath);
-            LogMessage($"Deleted {description}: {Path.GetFileName(filePath)}");
+                    File.Delete(filePath);
+                    LogMessage($"Deleted {description}: {Path.GetFileName(filePath)}");
+                    return;
+                }
+                catch (IOException ioEx) when (ioEx.Message.Contains("being used by another process"))
+                {
+                    if (attempt < 4) // Don't log on the last attempt
+                    {
+                        LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/5. Waiting...");
+                        Thread.Sleep(100 * (attempt + 1)); // Increasing delay: 100ms, 200ms, 300ms, 400ms
+                    }
+                    else
+                    {
+                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 5 attempts: {ioEx.Message}");
+                        Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)} after multiple attempts", ioEx));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)}: {ex.Message}");
+                    Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)}", ex));
+                    return; // Non-IO exceptions don't benefit from retry
+                }
+            }
         }
         catch (Exception ex)
         {
-            LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)}: {ex.Message}");
-            Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)}", ex));
+            LogMessage($"Error in TryDeleteFile for {description} {filePath}: {ex.Message}");
+            Task.Run(() => ReportBugAsync($"Error in TryDeleteFile: {description}", ex));
         }
     }
+
 
     private void TryDeleteDirectory(string dirPath, string description)
     {
