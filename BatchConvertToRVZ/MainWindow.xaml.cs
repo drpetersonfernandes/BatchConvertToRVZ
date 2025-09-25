@@ -550,12 +550,26 @@ public partial class MainWindow : IDisposable
         catch (OperationCanceledException)
         {
             LogMessage($"Processing cancelled for {Path.GetFileName(inputFile)}.");
+
             var potentialOutputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
+
             if (File.Exists(potentialOutputFile))
             {
-                // Additional delay for cancellation scenario
-                await Task.Delay(200, CancellationToken.None);
-                TryDeleteFile(potentialOutputFile, "partially created RVZ file after cancellation");
+                // Wait a bit longer to ensure the file handle is released
+                for (var i = 0; i < 10; i++)
+                {
+                    try
+                    {
+                        File.Delete(potentialOutputFile);
+                        LogMessage($"Deleted partially created RVZ file after cancellation: {Path.GetFileName(potentialOutputFile)}");
+                        break;
+                    }
+                    catch (IOException)
+                    {
+                        // File is still locked, wait and retry
+                        await Task.Delay(300 * (i + 1), CancellationToken.None); // Exponential backoff
+                    }
+                }
             }
 
             throw;
@@ -726,11 +740,47 @@ public partial class MainWindow : IDisposable
         catch (OperationCanceledException)
         {
             LogMessage($"Conversion cancelled for {Path.GetFileName(inputFile)}.");
+
+            // Wait for the process to fully exit
+            if (!process.HasExited)
+            {
+                try
+                {
+                    process.Kill(true);
+                }
+                catch
+                {
+                    /* ignore */
+                }
+
+                // Wait for the process to exit (with timeout)
+                try
+                {
+                    await process.WaitForExitAsync(CancellationToken.None);
+                }
+                catch
+                {
+                    /* ignore */
+                }
+            }
+
             if (File.Exists(outputFile))
             {
-                // Additional delay to ensure process has fully released the file
-                await Task.Delay(200, CancellationToken.None);
-                TryDeleteFile(outputFile, "partially created RVZ file after cancellation");
+                // Wait a bit longer to ensure file handle is released
+                for (var i = 0; i < 10; i++)
+                {
+                    try
+                    {
+                        File.Delete(outputFile);
+                        LogMessage($"Deleted partially created RVZ file after cancellation: {Path.GetFileName(outputFile)}");
+                        break;
+                    }
+                    catch (IOException)
+                    {
+                        // File is still locked, wait and retry
+                        await Task.Delay(300 * (i + 1), CancellationToken.None); // Exponential backoff
+                    }
+                }
             }
 
             throw;
@@ -754,7 +804,6 @@ public partial class MainWindow : IDisposable
             // Process disposal is handled by 'using' statement
         }
     }
-
 
     private void TryDeleteFile(string filePath, string description)
     {
