@@ -335,32 +335,33 @@ public partial class MainWindow : IDisposable
 
     private void SetControlsState(bool enabled)
     {
-        MainTabControl.IsEnabled = enabled;
-
-        InputFolderTextBox.IsEnabled = enabled;
-        OutputFolderTextBox.IsEnabled = enabled;
-        BrowseInputButton.IsEnabled = enabled;
-        BrowseOutputButton.IsEnabled = enabled;
-        DeleteFilesCheckBox.IsEnabled = enabled;
-        ParallelProcessingCheckBox.IsEnabled = enabled;
-        StartConversionButton.IsEnabled = enabled;
-
-        VerifyFolderTextBox.IsEnabled = enabled;
-        BrowseVerifyFolderButton.IsEnabled = enabled;
-        MoveFailedCheckBox.IsEnabled = enabled;
-        MoveSuccessCheckBox.IsEnabled = enabled;
-        StartVerifyButton.IsEnabled = enabled;
-
-        // Progress bar and text are now always visible in XAML,
-        // so we only control the Cancel button's visibility here.
-        CancelButton.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
-
-        if (enabled) // If controls are enabled (operation finished or not started)
+        Application.Current.Dispatcher.Invoke(() =>
         {
-            ClearProgressDisplay(); // Set to idle state
-        }
+            MainTabControl.IsEnabled = enabled;
 
-        UpdateWriteSpeedDisplay(0);
+            InputFolderTextBox.IsEnabled = enabled;
+            OutputFolderTextBox.IsEnabled = enabled;
+            BrowseInputButton.IsEnabled = enabled;
+            BrowseOutputButton.IsEnabled = enabled;
+            DeleteFilesCheckBox.IsEnabled = enabled;
+            ParallelProcessingCheckBox.IsEnabled = enabled;
+            StartConversionButton.IsEnabled = enabled;
+
+            VerifyFolderTextBox.IsEnabled = enabled;
+            BrowseVerifyFolderButton.IsEnabled = enabled;
+            MoveFailedCheckBox.IsEnabled = enabled;
+            MoveSuccessCheckBox.IsEnabled = enabled;
+            StartVerifyButton.IsEnabled = enabled;
+
+            CancelButton.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+
+            if (enabled) // If controls are enabled (operation finished or not started)
+            {
+                ClearProgressDisplay(); // Set to idle state
+            }
+
+            UpdateWriteSpeedDisplay(0);
+        });
     }
 
     private static string? SelectFolder(string description)
