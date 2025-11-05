@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -8,19 +8,19 @@ using SevenZip;
 
 namespace BatchConvertToRVZ;
 
-public partial class App : IDisposable
+public partial class App
 {
     // Bug Report API configuration
     private const string BugReportApiUrl = "https://www.purelogiccode.com/bugreport/api/send-bug-report";
     private const string BugReportApiKey = "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e";
     private const string ApplicationName = "BatchConvertToRVZ";
 
-    private readonly BugReportService? _bugReportService;
+    public static BugReportService? BugReportServiceInstance { get; private set; }
 
     public App()
     {
         // Initialize the bug report service
-        _bugReportService = new BugReportService(BugReportApiUrl, BugReportApiKey, ApplicationName);
+        BugReportServiceInstance = new BugReportService(BugReportApiUrl, BugReportApiKey, ApplicationName);
 
         // Set up global exception handling
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
@@ -37,7 +37,7 @@ public partial class App : IDisposable
     private void App_Exit(object sender, ExitEventArgs e)
     {
         // Dispose of the shared BugReportService instance
-        _bugReportService?.Dispose();
+        BugReportServiceInstance?.Dispose();
 
         // Unregister event handlers to prevent memory leaks
         AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
@@ -61,9 +61,9 @@ public partial class App : IDisposable
                 default:
                 {
                     var errorMessage = $"Unsupported processor architecture: {RuntimeInformation.ProcessArchitecture}. Only x64 and ARM64 are supported.";
-                    if (_bugReportService != null)
+                    if (BugReportServiceInstance != null)
                     {
-                        _ = _bugReportService.SendBugReportAsync(errorMessage);
+                        _ = BugReportServiceInstance?.SendBugReportAsync(errorMessage);
                     }
 
                     return;
@@ -83,18 +83,18 @@ public partial class App : IDisposable
                 var errorMessage =
                     $"Could not find the required 7-Zip library: {dllName} in {AppDomain.CurrentDomain.BaseDirectory}";
 
-                if (_bugReportService != null)
+                if (BugReportServiceInstance != null)
                 {
-                    _ = _bugReportService.SendBugReportAsync(errorMessage);
+                    _ = BugReportServiceInstance?.SendBugReportAsync(errorMessage);
                 }
             }
         }
         catch (Exception ex)
         {
             // Notify developer
-            if (_bugReportService != null)
+            if (BugReportServiceInstance != null)
             {
-                _ = _bugReportService.SendBugReportAsync(ex.Message);
+                _ = BugReportServiceInstance?.SendBugReportAsync(ex.Message);
             }
         }
     }
@@ -119,16 +119,16 @@ public partial class App : IDisposable
         e.SetObserved();
     }
 
-    private async void ReportException(Exception exception, string source)
+    private void ReportException(Exception exception, string source)
     {
         try
         {
             var message = BuildExceptionReport(exception, source);
 
             // Notify developer
-            if (_bugReportService != null)
+            if (BugReportServiceInstance != null)
             {
-                await _bugReportService.SendBugReportAsync(message);
+                _ = BugReportServiceInstance?.SendBugReportAsync(message);
             }
         }
         catch
@@ -144,6 +144,7 @@ public partial class App : IDisposable
         sb.AppendLine(CultureInfo.InvariantCulture, $"Date and Time: {DateTime.Now}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"OS Version: {Environment.OSVersion}");
         sb.AppendLine(CultureInfo.InvariantCulture, $".NET Version: {Environment.Version}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Architecture: {RuntimeInformation.ProcessArchitecture}");
         sb.AppendLine();
 
         // Add exception details
@@ -176,23 +177,5 @@ public partial class App : IDisposable
 
             break;
         }
-    }
-
-    /// <inheritdoc />
-    /// <summary>
-    /// Releases all resources used by the App.
-    /// </summary>
-    public void Dispose()
-    {
-        // Dispose the BugReportService if it exists
-        _bugReportService?.Dispose();
-
-        // Unregister event handlers to prevent memory leaks
-        AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
-        DispatcherUnhandledException -= App_DispatcherUnhandledException;
-        TaskScheduler.UnobservedTaskException -= TaskScheduler_UnobservedTaskException;
-
-        // Suppress finalization
-        GC.SuppressFinalize(this);
     }
 }

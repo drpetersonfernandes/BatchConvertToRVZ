@@ -34,14 +34,9 @@ public partial class AboutWindow
         catch (Exception ex)
         {
             // Notify developer
-            // FIX: Wrap the disposable service in a 'using' statement.
-            using (var bugReportService = new BugReportService(
-                       "https://www.purelogiccode.com/bugreport/api/send-bug-report",
-                       "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e",
-                       "BatchConvertToRVZ"))
+            if (App.BugReportServiceInstance != null)
             {
-                _ = bugReportService.SendBugReportAsync(
-                    $"Error opening URL: {e.Uri.AbsoluteUri}. Exception: {ex.Message}");
+                _ = App.BugReportServiceInstance.SendBugReportAsync($"Error opening URL: {e.Uri.AbsoluteUri}. Exception: {ex.Message}");
             }
 
             // Notify user

@@ -1,5 +1,6 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
@@ -19,13 +20,8 @@ public partial class MainWindow : IDisposable
     private bool _processSmallerFilesFirst;
 
     private CancellationTokenSource _cts;
-    private readonly BugReportService _bugReportService;
     private readonly UpdateService _updateService;
 
-    // Bug Report API configuration
-    private const string BugReportApiUrl = "https://www.purelogiccode.com/bugreport/api/send-bug-report";
-    private const string BugReportApiKey = "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e";
-    private const string ApplicationName = "BatchConvertToRVZ";
     private const string GitHubApiUrl = "https://api.github.com/repos/drpetersonfernandes/BatchConvertToRVZ/releases/latest";
 
     private int _currentDegreeOfParallelismForFiles = 1;
@@ -65,8 +61,7 @@ public partial class MainWindow : IDisposable
         InitializeComponent();
         _cts = new CancellationTokenSource();
 
-        // Initialize the bug report service
-        _bugReportService = new BugReportService(BugReportApiUrl, BugReportApiKey, ApplicationName);
+        // The BugReportService is now initialized and managed by the App class.
         _updateService = new UpdateService(GitHubApiUrl);
 
         LogMessage("Welcome to the Batch Convert to RVZ.");
@@ -78,38 +73,51 @@ public partial class MainWindow : IDisposable
         LogMessage("Use the 'Verify Integrity' tab to check your existing RVZ files.");
         LogMessage("");
 
+        CheckDependencies();
+
+        ResetOperationStats();
+        Loaded += MainWindow_Loaded;
+    }
+
+    private void CheckDependencies()
+    {
         var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
-        string dolphinToolExeName;
+        var missingFiles = new List<string>();
+        string? dolphinToolExeName;
+        string? sevenZipDllName;
 
         try
         {
             dolphinToolExeName = GetDolphinToolExecutableName();
+            if (!File.Exists(Path.Combine(appDirectory, dolphinToolExeName))) missingFiles.Add(dolphinToolExeName);
+
+            sevenZipDllName = GetSevenZipDllName();
+            if (!File.Exists(Path.Combine(appDirectory, sevenZipDllName))) missingFiles.Add(sevenZipDllName);
         }
         catch (PlatformNotSupportedException ex)
         {
-            LogMessage($"ERROR: {ex.Message}");
-            ShowError($"Unsupported platform architecture. {ex.Message}");
-            Task.Run(() => ReportBugAsync($"Unsupported platform: {ex.Message}"));
-            dolphinToolExeName = "DolphinTool.exe"; // fallback
+            var errorMessage = $"Unsupported platform architecture. {ex.Message}";
+            LogMessage($"ERROR: {errorMessage}");
+            ShowError(errorMessage);
+            Task.Run(() => ReportBugAsync($"Unsupported platform: {ex.Message}", ex));
+            return; // Stop further checks
         }
 
-        var dolphinToolPath = Path.Combine(appDirectory, dolphinToolExeName);
-
-        if (File.Exists(dolphinToolPath))
+        if (missingFiles.Count != 0)
         {
-            LogMessage($"{dolphinToolExeName} found in the application directory.");
+            var missingFilesString = string.Join(", ", missingFiles);
+            var errorMessage = $"The following critical file(s) are missing: {missingFilesString}.\n\nThe application cannot function without them. Please ensure all files from the release archive are in the same folder as this application.";
+            LogMessage($"WARNING: {errorMessage.ReplaceLineEndings(" ")}");
+            ShowError(errorMessage);
+            Task.Run(() => ReportBugAsync($"Missing critical files: {missingFilesString}"));
         }
         else
         {
-            LogMessage($"WARNING: {dolphinToolExeName} not found in the application directory!");
-            LogMessage($"Please ensure {dolphinToolExeName} is in the same folder as this application.");
-            Task.Run(() => ReportBugAsync($"{dolphinToolExeName} not found in the application directory. This will prevent the application from functioning correctly."));
+            if (dolphinToolExeName != null) LogMessage($"{dolphinToolExeName} found in the application directory.");
+            if (sevenZipDllName != null) LogMessage($"{sevenZipDllName} found in the application directory.");
         }
 
         LogMessage("");
-
-        ResetOperationStats();
-        Loaded += MainWindow_Loaded;
     }
 
     private string GetDolphinToolExecutableName()
@@ -131,6 +139,17 @@ public partial class MainWindow : IDisposable
         }
 
         return "DolphinTool.exe";
+    }
+
+    [SuppressMessage("ReSharper", "SwitchExpressionHandlesSomeKnownEnumValuesWithExceptionInDefault")]
+    private string GetSevenZipDllName()
+    {
+        return RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "7z_x64.dll",
+            Architecture.Arm64 => "7z_arm64.dll",
+            _ => throw new PlatformNotSupportedException($"Unsupported architecture: {RuntimeInformation.ProcessArchitecture}")
+        };
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -537,13 +556,13 @@ public partial class MainWindow : IDisposable
             {
                 // Small delay before deleting original archive
                 await Task.Delay(50, _cts.Token);
-                TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}");
+                await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}");
             }
             else
             {
                 // Small delay before deleting original ISO
                 await Task.Delay(50, _cts.Token);
-                TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}");
+                await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}");
             }
 
             return success;
@@ -568,7 +587,7 @@ public partial class MainWindow : IDisposable
                     catch (IOException)
                     {
                         // File is still locked, wait and retry
-                        await Task.Delay(300 * (i + 1), CancellationToken.None); // Exponential backoff
+                        await Task.Delay(300 * (i + 1), _cts.Token); // Exponential backoff
                     }
                 }
             }
@@ -583,8 +602,8 @@ public partial class MainWindow : IDisposable
             if (File.Exists(potentialOutputFile))
             {
                 // Small delay before attempting deletion
-                await Task.Delay(100, CancellationToken.None);
-                TryDeleteFile(potentialOutputFile, "partially created RVZ file after error");
+                await Task.Delay(100, _cts.Token);
+                await TryDeleteFile(potentialOutputFile, "partially created RVZ file after error");
             }
 
             return false;
@@ -594,7 +613,7 @@ public partial class MainWindow : IDisposable
             if (isArchiveFile && !string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
             {
                 // Small delay before cleaning up temp directory
-                await Task.Delay(100, CancellationToken.None);
+                await Task.Delay(100, _cts.Token);
                 TryDeleteDirectory(tempDir, "temporary extraction directory");
             }
         }
@@ -670,13 +689,13 @@ public partial class MainWindow : IDisposable
                             process.Kill(true);
 
                             // Give it a moment to exit gracefully
-                            await Task.Delay(150, CancellationToken.None);
+                            await Task.Delay(150, _cts.Token);
 
                             // If still running, force kill
                             if (!process.HasExited)
                             {
                                 process.Kill();
-                                await Task.Delay(100, CancellationToken.None);
+                                await Task.Delay(100, _cts.Token);
                             }
                         }
                     }
@@ -757,7 +776,7 @@ public partial class MainWindow : IDisposable
                 // Wait for the process to exit (with timeout)
                 try
                 {
-                    await process.WaitForExitAsync(CancellationToken.None);
+                    await process.WaitForExitAsync(_cts.Token);
                 }
                 catch
                 {
@@ -779,7 +798,7 @@ public partial class MainWindow : IDisposable
                     catch (IOException)
                     {
                         // File is still locked, wait and retry
-                        await Task.Delay(300 * (i + 1), CancellationToken.None); // Exponential backoff
+                        await Task.Delay(300 * (i + 1), _cts.Token); // Exponential backoff
                     }
                 }
             }
@@ -793,8 +812,8 @@ public partial class MainWindow : IDisposable
             if (File.Exists(outputFile))
             {
                 // Small delay before attempting deletion
-                await Task.Delay(100, CancellationToken.None);
-                TryDeleteFile(outputFile, "partially created RVZ file after error");
+                await Task.Delay(100, _cts.Token);
+                await TryDeleteFile(outputFile, "partially created RVZ file after error");
             }
 
             return false;
@@ -806,7 +825,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private void TryDeleteFile(string filePath, string description)
+    private async Task TryDeleteFile(string filePath, string description)
     {
         try
         {
@@ -820,7 +839,7 @@ public partial class MainWindow : IDisposable
                     // First check if file is locked by trying to open it
                     try
                     {
-                        using (new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                        await using (new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
                         {
                             // If we can open it exclusively, we can delete it
                         }
@@ -832,7 +851,7 @@ public partial class MainWindow : IDisposable
                         {
                             var delay = 50 * (attempt + 1); // 50ms, 100ms, 150ms, ..., 500ms
                             LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
-                            Thread.Sleep(delay);
+                            await Task.Delay(delay, _cts.Token);
                             continue;
                         }
                     }
@@ -856,12 +875,12 @@ public partial class MainWindow : IDisposable
                     {
                         var delay = 100 * (attempt + 1); // 100ms, 200ms, 300ms, ..., 1000ms
                         LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
-                        Thread.Sleep(delay);
+                        await Task.Delay(delay, _cts.Token);
                     }
                     else
                     {
                         LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts: {ioEx.Message}");
-                        Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)} after multiple attempts", ioEx));
+                        _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)} after multiple attempts", ioEx));
                     }
                 }
                 catch (UnauthorizedAccessException authEx)
@@ -880,18 +899,18 @@ public partial class MainWindow : IDisposable
                     {
                         var delay = 150 * (attempt + 1);
                         LogMessage($"Access denied for {Path.GetFileName(filePath)}. Attempt {attempt + 1}/10. Waiting {delay}ms...");
-                        Thread.Sleep(delay);
+                        await Task.Delay(delay, _cts.Token);
                     }
                     else
                     {
                         LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts due to access denied: {authEx.Message}");
-                        Task.Run(() => ReportBugAsync($"Access denied when deleting {description}: {Path.GetFileName(filePath)} after multiple attempts", authEx));
+                        _ = Task.Run(() => ReportBugAsync($"Access denied when deleting {description}: {Path.GetFileName(filePath)} after multiple attempts", authEx));
                     }
                 }
                 catch (Exception ex)
                 {
                     LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)}: {ex.Message}");
-                    Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)}", ex));
+                    _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)}", ex));
                     return; // Non-IO exceptions don't benefit from retry
                 }
             }
@@ -899,7 +918,7 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error in TryDeleteFile for {description} {filePath}: {ex.Message}");
-            Task.Run(() => ReportBugAsync($"Error in TryDeleteFile: {description}", ex));
+            _ = Task.Run(() => ReportBugAsync($"Error in TryDeleteFile: {description}", ex));
         }
     }
 
@@ -941,6 +960,13 @@ public partial class MainWindow : IDisposable
         try
         {
             Directory.CreateDirectory(tempDir);
+
+            if (_cts.Token.IsCancellationRequested)
+            {
+                LogMessage($"Cancellation requested. Skipping extraction for {archiveFileName}.");
+                _cts.Token.ThrowIfCancellationRequested();
+            }
+
             LogMessage($"Extracting {archiveFileName} to temporary directory: {tempDir}");
 
             switch (extension)
@@ -966,6 +992,11 @@ public partial class MainWindow : IDisposable
                         extractor.ExtractArchive(tempDir);
 
                         // Check again after the operation if it was lengthy
+                        if (_cts.Token.IsCancellationRequested)
+                        {
+                            LogMessage($"Extraction of {archiveFileName} completed, but cancellation was requested. Cleaning up.");
+                        }
+
                         _cts.Token.ThrowIfCancellationRequested();
                     }, _cts.Token); // Passing the token here allows Task.Run to respond to cancellation
                     // by throwing an OperationCanceledException, which is caught below.
@@ -998,12 +1029,24 @@ public partial class MainWindow : IDisposable
             // Re-throw to indicate the operation was cancelled
             throw;
         }
+        catch (SevenZipException ex)
+        {
+            // Handle specific archive errors (corrupt, encrypted, etc.) without sending a bug report.
+            var errorMessage = $"Failed to extract archive {archiveFileName}. It may be corrupt, encrypted, or an unsupported format. Error: {ex.Message}";
+            LogMessage(errorMessage);
+
+            // Clean up the temporary directory on failure
+            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+
+            // Return a failure result with the detailed error message
+            return (false, string.Empty, tempDir, errorMessage);
+        }
         catch (Exception ex)
         {
             // Log any other exceptions that occurred during extraction
             LogMessage($"Error extracting archive {archiveFileName}: {ex.Message}");
 
-            // Report the bug asynchronously
+            // Report the bug asynchronously for unexpected errors
             await ReportBugAsync($"Error extracting archive: {archiveFileName}", ex);
 
             // Clean up the temporary directory on failure
@@ -1054,10 +1097,11 @@ public partial class MainWindow : IDisposable
         {
             var fullReport = new StringBuilder();
             fullReport.AppendLine("=== Bug Report ===");
-            fullReport.AppendLine($"Application: {ApplicationName}");
+            fullReport.AppendLine("Application: BatchConvertToRVZ");
             fullReport.AppendLine(CultureInfo.InvariantCulture, $"Version: {GetType().Assembly.GetName().Version}");
             fullReport.AppendLine(CultureInfo.InvariantCulture, $"OS: {Environment.OSVersion}");
             fullReport.AppendLine(CultureInfo.InvariantCulture, $".NET Version: {Environment.Version}");
+            fullReport.AppendLine(CultureInfo.InvariantCulture, $"Architecture: {RuntimeInformation.ProcessArchitecture}");
             fullReport.AppendLine(CultureInfo.InvariantCulture, $"Date/Time: {DateTime.Now}");
             fullReport.AppendLine();
             fullReport.AppendLine("=== Error Message ===");
@@ -1080,7 +1124,7 @@ public partial class MainWindow : IDisposable
                 }
             }
 
-            await _bugReportService.SendBugReportAsync(fullReport.ToString());
+            await App.BugReportServiceInstance!.SendBugReportAsync(fullReport.ToString());
         }
         catch
         {
@@ -1137,7 +1181,7 @@ public partial class MainWindow : IDisposable
         }
         catch (Exception ex)
         {
-            _ = _bugReportService.SendBugReportAsync($"Error checking for updates: {ex.Message}");
+            _ = App.BugReportServiceInstance?.SendBugReportAsync($"Error checking for updates: {ex.Message}");
         }
     }
 
@@ -1201,7 +1245,7 @@ public partial class MainWindow : IDisposable
         {
             var errorMessage = $"Error opening URL: {url}. Exception: {ex.Message}";
             LogMessage(errorMessage);
-            _ = _bugReportService.SendBugReportAsync(errorMessage);
+            _ = App.BugReportServiceInstance?.SendBugReportAsync(errorMessage);
             MessageBox.Show($"Unable to open link: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -1227,7 +1271,6 @@ public partial class MainWindow : IDisposable
 
         _cts?.Cancel();
         _cts?.Dispose();
-        _bugReportService?.Dispose();
         _updateService?.Dispose();
         _operationTimer?.Stop();
         GC.SuppressFinalize(this);
@@ -1398,7 +1441,6 @@ public partial class MainWindow : IDisposable
             LogMessage($"Verifying: {fileName}...");
             var arguments = $"verify -i \"{inputFile}\"";
 
-            // FIX: Generate the temporary directory name inside the task to ensure uniqueness
             tempWorkingDirectory = Path.Combine(Path.GetTempPath(), "BatchConvertToRVZ_DolphinTool_Temp_" + Path.GetRandomFileName());
             Directory.CreateDirectory(tempWorkingDirectory);
 
@@ -1473,11 +1515,11 @@ public partial class MainWindow : IDisposable
             {
                 if (verificationResult && moveSuccess)
                 {
-                    MoveFileToSubfolder(inputFile, baseFolder, "_Success");
+                    await MoveFileToSubfolder(inputFile, baseFolder, "_Success");
                 }
                 else if (!verificationResult && moveFailed)
                 {
-                    MoveFileToSubfolder(inputFile, baseFolder, "_Failed");
+                    await MoveFileToSubfolder(inputFile, baseFolder, "_Failed");
                 }
             }
             else
@@ -1495,7 +1537,7 @@ public partial class MainWindow : IDisposable
     }
 
 
-    private void MoveFileToSubfolder(string sourceFilePath, string baseFolder, string subfolderName)
+    private async Task MoveFileToSubfolder(string sourceFilePath, string baseFolder, string subfolderName)
     {
         try
         {
@@ -1507,7 +1549,7 @@ public partial class MainWindow : IDisposable
             if (File.Exists(destinationFilePath))
             {
                 LogMessage($"Deleting existing file at destination: {Path.GetFileName(destinationFilePath)}");
-                TryDeleteFile(destinationFilePath, $"existing file in {subfolderName} folder");
+                await TryDeleteFile(destinationFilePath, $"existing file in {subfolderName} folder");
             }
 
             File.Move(sourceFilePath, destinationFilePath);
@@ -1516,7 +1558,7 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error moving file '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder: {ex.Message}");
-            Task.Run(() => ReportBugAsync($"Error moving file: {Path.GetFileName(sourceFilePath)} to {subfolderName}", ex));
+            _ = Task.Run(() => ReportBugAsync($"Error moving file: {Path.GetFileName(sourceFilePath)} to {subfolderName}", ex));
         }
     }
 

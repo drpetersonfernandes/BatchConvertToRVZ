@@ -41,7 +41,7 @@ The application also supports extracting ISO images from archives and allows par
 - **Memory Management**: Proper resource disposal and memory leak prevention
 - **Configurable Compression**: Uses optimized RVZ compression settings (Zstandard, level 5, 128KB blocks)
 - **Temporary File Management**: Intelligent cleanup of temporary extraction directories
-- **Cross-Architecture Support**: Supports both x64 and x86 systems with appropriate 7z libraries
+- **Cross-Architecture Support**: Supports both x64 and ARM64 systems with appropriate dependencies
 
 ## Supported File Formats
 
@@ -57,8 +57,8 @@ The application also supports extracting ISO images from archives and allows par
 - **Operating System**: Windows 7 or later
 - **Runtime**: [.NET 9.0 Runtime](https://dotnet.microsoft.com/download/dotnet/9.0)
 - **Dependencies**: All required files are included:
-    - `DolphinTool.exe` (for conversion and verification)
-    - `7z_x64.dll` and `7z_x86.dll` (for archive extraction)
+    - `DolphinTool.exe` / `DolphinTool_arm64.exe` (for conversion and verification)
+    - `7z_x64.dll` / `7z_arm64.dll` (for archive extraction)
 
 ## Installation
 
