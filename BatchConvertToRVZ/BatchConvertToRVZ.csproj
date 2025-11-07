@@ -24,7 +24,6 @@
     <Resource Include="images\about.png" />
     <Resource Include="images\exit.png" />
     <Resource Include="images\logo.png" />
-    <None Remove="images\update.png" />
     <Resource Include="images\update.png" />
     <None Update="7z_arm64.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>

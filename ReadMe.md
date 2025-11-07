@@ -24,7 +24,8 @@ The application also supports extracting ISO images from archives and allows par
 ### Verification Features
 - **RVZ Integrity Verification**: Verify the integrity of existing RVZ files using DolphinTool
 - **Batch Verification**: Check multiple RVZ files in a single operation
-- **File Organization**: Optionally move verified/failed files to organized subfolders
+- **Parallel Processing**: Optionally verify multiple RVZ files in parallel to speed up the process
+- **File Organization**: Optionally move successfully verified or failed files to organized subfolders
 - **Detailed Reporting**: Get comprehensive verification results for each file
 
 ### User Experience
@@ -83,6 +84,7 @@ The application also supports extracting ISO images from archives and allows par
 2. **Select Verify Folder**: Click "Browse" to select the folder containing RVZ files to verify
 3. **Configure Organization** (optional):
     - Check "Move failed RVZ files to '_Failed' subfolder" to organize problematic files
+    - Check "Enable parallel processing" to verify multiple files concurrently
     - Check "Move successful RVZ files to '_Success' subfolder" to organize verified files
 4. **Start Verification**: Click "Start Verification" to begin checking file integrity
 5. **Review Results**: Check the log and statistics for detailed verification results

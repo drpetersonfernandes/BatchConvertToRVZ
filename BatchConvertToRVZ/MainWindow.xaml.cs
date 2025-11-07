@@ -17,8 +17,9 @@ public partial class MainWindow : IDisposable
 {
     private bool _disposed;
     private Task? _runningTask;
+    private bool _dependenciesOk;
+    private string? _dolphinToolPath;
     private bool _processSmallerFilesFirst;
-
     private CancellationTokenSource _cts;
     private readonly UpdateService _updateService;
 
@@ -26,7 +27,6 @@ public partial class MainWindow : IDisposable
 
     private int _currentDegreeOfParallelismForFiles = 1;
 
-    // DolphinTool specific constants
     private const string RvzCompressionMethod = "zstd"; // Default compression method
     private const int RvzCompressionLevel = 5; // Default compression level
     private const int RvzBlockSize = 131072; // Default block size
@@ -89,7 +89,8 @@ public partial class MainWindow : IDisposable
         try
         {
             dolphinToolExeName = GetDolphinToolExecutableName();
-            if (!File.Exists(Path.Combine(appDirectory, dolphinToolExeName))) missingFiles.Add(dolphinToolExeName);
+            _dolphinToolPath = Path.Combine(appDirectory, dolphinToolExeName);
+            if (!File.Exists(_dolphinToolPath)) missingFiles.Add(dolphinToolExeName);
 
             sevenZipDllName = GetSevenZipDllName();
             if (!File.Exists(Path.Combine(appDirectory, sevenZipDllName))) missingFiles.Add(sevenZipDllName);
@@ -100,11 +101,15 @@ public partial class MainWindow : IDisposable
             LogMessage($"ERROR: {errorMessage}");
             ShowError(errorMessage);
             Task.Run(() => ReportBugAsync($"Unsupported platform: {ex.Message}", ex));
+            _dependenciesOk = false;
+            StartConversionButton.IsEnabled = false;
+            StartVerifyButton.IsEnabled = false;
             return; // Stop further checks
         }
 
         if (missingFiles.Count != 0)
         {
+            _dependenciesOk = false;
             var missingFilesString = string.Join(", ", missingFiles);
             var errorMessage = $"The following critical file(s) are missing: {missingFilesString}.\n\nThe application cannot function without them. Please ensure all files from the release archive are in the same folder as this application.";
             LogMessage($"WARNING: {errorMessage.ReplaceLineEndings(" ")}");
@@ -113,6 +118,9 @@ public partial class MainWindow : IDisposable
         }
         else
         {
+            _dependenciesOk = true;
+            StartConversionButton.IsEnabled = true;
+            StartVerifyButton.IsEnabled = true;
             if (dolphinToolExeName != null) LogMessage($"{dolphinToolExeName} found in the application directory.");
             if (sevenZipDllName != null) LogMessage($"{sevenZipDllName} found in the application directory.");
         }
@@ -230,39 +238,24 @@ public partial class MainWindow : IDisposable
     {
         try
         {
-            var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
-            string dolphinToolExeName;
-
-            try
+            if (!_dependenciesOk || string.IsNullOrEmpty(_dolphinToolPath))
             {
-                dolphinToolExeName = GetDolphinToolExecutableName();
-            }
-            catch (PlatformNotSupportedException ex)
-            {
-                LogMessage($"ERROR: {ex.Message}");
-                ShowError($"Unsupported platform architecture. {ex.Message}");
-                await ReportBugAsync($"Unsupported platform during conversion: {ex.Message}");
-                return;
-            }
-
-            var dolphinToolPath = Path.Combine(appDirectory, dolphinToolExeName);
-
-            if (!File.Exists(dolphinToolPath))
-            {
-                LogMessage($"Error: {dolphinToolExeName} not found in the application folder.");
-                ShowError($"{dolphinToolExeName} is missing from the application folder. Please ensure it's in the same directory as this application.");
-                await ReportBugAsync($"{dolphinToolExeName} not found when trying to start conversion",
-                    new FileNotFoundException($"The required {dolphinToolExeName} file was not found.", dolphinToolPath));
+                LogMessage("Error: Critical dependencies are missing. Cannot start conversion.");
+                ShowError("A required file (like DolphinTool.exe) is missing. Please check the application directory.");
                 return;
             }
 
             var inputFolder = InputFolderTextBox.Text;
             var outputFolder = OutputFolderTextBox.Text;
             var deleteFiles = DeleteFilesCheckBox.IsChecked ?? false;
-            var useParallelFileProcessing = ParallelProcessingCheckBox.IsChecked ?? false;
+            var useParallelFileProcessing = ParallelProcessingCheckBox.IsChecked == true;
             _processSmallerFilesFirst = ProcessSmallerFilesFirstCheckBox.IsChecked ?? true;
 
-            _currentDegreeOfParallelismForFiles = useParallelFileProcessing ? 3 : 1;
+            _currentDegreeOfParallelismForFiles = 1;
+            if (useParallelFileProcessing && DegreeOfParallelismComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem selectedItem)
+            {
+                _ = int.TryParse(selectedItem.Content.ToString(), out _currentDegreeOfParallelismForFiles);
+            }
 
             if (string.IsNullOrEmpty(inputFolder))
             {
@@ -301,7 +294,7 @@ public partial class MainWindow : IDisposable
             _operationTimer.Restart();
 
             LogMessage("Starting batch conversion process...");
-            LogMessage($"Using {dolphinToolExeName}: {dolphinToolPath}");
+            LogMessage($"Using DolphinTool: {_dolphinToolPath}");
             LogMessage($"Input folder: {inputFolder}");
             LogMessage($"Output folder: {outputFolder}");
             LogMessage($"Delete original files: {deleteFiles}");
@@ -314,7 +307,7 @@ public partial class MainWindow : IDisposable
             {
                 try
                 {
-                    await PerformBatchConversionAsync(dolphinToolPath, inputFolder,
+                    await PerformBatchConversionAsync(_dolphinToolPath, inputFolder,
                         outputFolder, deleteFiles,
                         useParallelFileProcessing,
                         _currentDegreeOfParallelismForFiles);
@@ -334,7 +327,7 @@ public partial class MainWindow : IDisposable
                     UpdateProcessingTimeDisplay();
                     UpdateWriteSpeedDisplay(0);
                     SetControlsState(true);
-                    LogOperationSummary("Conversion");
+                    LogOperationSummary("convert", "Conversion");
                 }
             });
 
@@ -761,6 +754,9 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Conversion cancelled for {Path.GetFileName(inputFile)}.");
 
+            // Wait a moment for the OS to release the file handle after killing the process.
+            await Task.Delay(250, CancellationToken.None); // Use CancellationToken.None as the primary token is already cancelled.
+
             // Wait for the process to fully exit
             if (!process.HasExited)
             {
@@ -1002,8 +998,7 @@ public partial class MainWindow : IDisposable
                     // by throwing an OperationCanceledException, which is caught below.
                     break;
 
-                default:
-                    return (false, string.Empty, tempDir, $"Unsupported archive type: {extension}");
+                default: return (false, string.Empty, tempDir, $"Unsupported archive type: {extension}");
             }
 
             // After successful extraction (or if it wasn't cancelled during),
@@ -1011,12 +1006,9 @@ public partial class MainWindow : IDisposable
             var supportedFile = Directory.GetFiles(tempDir, "*.*", SearchOption.AllDirectories)
                 .FirstOrDefault(f => PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(f).ToLowerInvariant()));
 
-            if (supportedFile != null)
-            {
-                return (true, supportedFile, tempDir, string.Empty);
-            }
-
-            return (false, string.Empty, tempDir, "No supported primary files (.iso) found in archive.");
+            return supportedFile != null
+                ? (true, supportedFile, tempDir, string.Empty)
+                : (false, string.Empty, tempDir, "No supported primary files (.iso) found in archive.");
         }
         catch (OperationCanceledException)
         {
@@ -1289,33 +1281,22 @@ public partial class MainWindow : IDisposable
     {
         try
         {
-            var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
-            string dolphinToolExeName;
-
-            try
+            if (!_dependenciesOk || string.IsNullOrEmpty(_dolphinToolPath))
             {
-                dolphinToolExeName = GetDolphinToolExecutableName();
-            }
-            catch (PlatformNotSupportedException ex)
-            {
-                LogMessage($"ERROR: {ex.Message}");
-                ShowError($"Unsupported platform architecture. {ex.Message}");
-                await ReportBugAsync($"Unsupported platform during verification: {ex.Message}");
-                return;
-            }
-
-            var dolphinToolPath = Path.Combine(appDirectory, dolphinToolExeName);
-
-            if (!File.Exists(dolphinToolPath))
-            {
-                LogMessage($"Error: {dolphinToolExeName} not found in the application folder.");
-                ShowError($"{dolphinToolExeName} is missing from the application folder. Please ensure it's in the same directory as this application.");
-                await ReportBugAsync($"{dolphinToolExeName} not found when trying to start verification",
-                    new FileNotFoundException($"The required {dolphinToolExeName} file was not found.", dolphinToolPath));
+                LogMessage("Error: Critical dependencies are missing. Cannot start verification.");
+                ShowError("A required file (like DolphinTool.exe) is missing. Please check the application directory.");
                 return;
             }
 
             var verifyFolder = VerifyFolderTextBox.Text;
+            var useParallelVerification = VerifyParallelProcessingCheckBox.IsChecked == true;
+
+            var maxConcurrency = 1;
+            if (useParallelVerification && VerifyDegreeOfParallelismComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem selectedItem)
+            {
+                _ = int.TryParse(selectedItem.Content.ToString(), out maxConcurrency);
+            }
+
             _moveFailedFiles = MoveFailedCheckBox.IsChecked ?? false;
             _moveSuccessFiles = MoveSuccessCheckBox.IsChecked ?? false;
 
@@ -1337,7 +1318,8 @@ public partial class MainWindow : IDisposable
             _operationTimer.Restart();
 
             LogMessage("Starting batch verification process...");
-            LogMessage($"Using {dolphinToolExeName}: {dolphinToolPath}");
+            LogMessage($"Using DolphinTool: {_dolphinToolPath}");
+            LogMessage($"Parallel verification: {useParallelVerification} (Max concurrency: {maxConcurrency})");
             LogMessage($"Verification folder: {verifyFolder}");
             if (_moveFailedFiles) LogMessage("Failed files will be moved to '_Failed' subfolder.");
             if (_moveSuccessFiles) LogMessage("Successful files will be moved to '_Success' subfolder.");
@@ -1346,8 +1328,8 @@ public partial class MainWindow : IDisposable
             {
                 try
                 {
-                    await PerformBatchVerificationAsync(dolphinToolPath, verifyFolder,
-                        _moveFailedFiles, _moveSuccessFiles);
+                    await PerformBatchVerificationAsync(_dolphinToolPath, verifyFolder,
+                        _moveFailedFiles, _moveSuccessFiles, useParallelVerification, maxConcurrency);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1363,7 +1345,7 @@ public partial class MainWindow : IDisposable
                     _operationTimer.Stop();
                     UpdateProcessingTimeDisplay();
                     SetControlsState(true);
-                    LogOperationSummary("Verification");
+                    LogOperationSummary("verify", "Verification");
                 }
             });
 
@@ -1375,7 +1357,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task PerformBatchVerificationAsync(string dolphinToolPath, string verifyFolder, bool moveFailed, bool moveSuccess)
+    private async Task PerformBatchVerificationAsync(string dolphinToolPath, string verifyFolder, bool moveFailed, bool moveSuccess, bool useParallel, int maxConcurrency)
     {
         try
         {
@@ -1396,24 +1378,49 @@ public partial class MainWindow : IDisposable
 
             var filesProcessedCount = 0;
 
-            foreach (var inputFile in files)
+            if (useParallel && files.Length > 1)
             {
-                if (_cts.Token.IsCancellationRequested) break;
-
-                var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, verifyFolder, moveFailed, moveSuccess);
-                if (success)
+                LogMessage("Using parallel verification.");
+                var parallelOptions = new ParallelOptions
                 {
-                    _successCount++;
-                }
-                else
-                {
-                    _failureCount++;
-                }
+                    MaxDegreeOfParallelism = maxConcurrency,
+                    CancellationToken = _cts.Token
+                };
 
-                var processed = ++filesProcessedCount;
-                UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
-                UpdateStatsDisplay();
-                UpdateProcessingTimeDisplay();
+                await Parallel.ForEachAsync(files, parallelOptions, async (inputFile, token) =>
+                {
+                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, verifyFolder, moveFailed, moveSuccess);
+                    if (success) Interlocked.Increment(ref _successCount);
+                    else Interlocked.Increment(ref _failureCount);
+
+                    var processed = Interlocked.Increment(ref filesProcessedCount);
+                    UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
+                    UpdateStatsDisplay();
+                    UpdateProcessingTimeDisplay();
+                });
+            }
+            else
+            {
+                LogMessage("Using sequential verification.");
+                foreach (var inputFile in files)
+                {
+                    if (_cts.Token.IsCancellationRequested) break;
+
+                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, verifyFolder, moveFailed, moveSuccess);
+                    if (success)
+                    {
+                        _successCount++;
+                    }
+                    else
+                    {
+                        _failureCount++;
+                    }
+
+                    var processed = ++filesProcessedCount;
+                    UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
+                    UpdateStatsDisplay();
+                    UpdateProcessingTimeDisplay();
+                }
             }
         }
         catch (OperationCanceledException)
@@ -1612,29 +1619,30 @@ public partial class MainWindow : IDisposable
         });
     }
 
-    private void LogOperationSummary(string operationType)
+    private void LogOperationSummary(string operationVerb, string operationNoun)
     {
         LogMessage("");
-        LogMessage($"--- Batch {operationType.ToLowerInvariant()} completed. ---");
+        LogMessage($"--- Batch {operationNoun} completed. ---");
         LogMessage($"Total files processed: {_totalFilesToProcess}");
-        LogMessage($"Successfully {GetPastTense(operationType)}: {_successCount} files");
-        if (_failureCount > 0) LogMessage($"Failed to {operationType.ToLowerInvariant()}: {_failureCount} files");
+        LogMessage($"Successfully {GetPastTense(operationVerb)}: {_successCount} files");
+        if (_failureCount > 0) LogMessage($"Failed to {operationVerb}: {_failureCount} files");
 
-        ShowMessageBox($"Batch {operationType.ToLowerInvariant()} completed.\n\n" +
+        ShowMessageBox($"Batch {operationNoun} completed.\n\n" +
                        $"Total files processed: {_totalFilesToProcess}\n" +
-                       $"Successfully {GetPastTense(operationType)}: {_successCount} files\n" +
+                       $"Successfully {GetPastTense(operationVerb)}: {_successCount} files\n" +
                        $"Failed: {_failureCount} files",
-            $"{operationType} Complete", MessageBoxButton.OK,
+            $"{operationNoun} Complete", MessageBoxButton.OK,
             _failureCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
     }
 
     private static string GetPastTense(string verb)
     {
-        return verb.ToLowerInvariant() switch
+        verb = verb.ToLowerInvariant();
+        if (verb.EndsWith('y'))
         {
-            "conversion" => "converted",
-            "verification" => "verified",
-            _ => verb.ToLowerInvariant() + "ed"
-        };
+            return verb[..^1] + "ied";
+        }
+
+        return verb.EndsWith('e') ? verb + "d" : verb + "ed";
     }
 }

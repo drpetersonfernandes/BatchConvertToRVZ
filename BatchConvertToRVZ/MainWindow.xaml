@@ -1,4 +1,4 @@
-﻿<Window x:Class="BatchConvertToRVZ.MainWindow"
+<Window x:Class="BatchConvertToRVZ.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Batch Convert to RVZ"
@@ -71,12 +71,26 @@
                               Margin="10,5,10,5"
                               HorizontalAlignment="Left"/>
 
-                    <!-- Parallel Processing Checkbox -->
+                    <!-- Parallel Processing Options -->
                     <CheckBox x:Name="ParallelProcessingCheckBox"
                               Content="Enable parallel processing (multiple files at once)"
-                              Margin="10,5,10,5"
+                              Margin="10,5,10,0"
                               HorizontalAlignment="Left"
                               IsChecked="False"/>
+
+                    <StackPanel Orientation="Horizontal" Margin="30,5,10,5"
+                                IsEnabled="{Binding ElementName=ParallelProcessingCheckBox, Path=IsChecked}">
+                        <Label Content="Max concurrent files:" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="DegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1">
+                            <ComboBoxItem Content="2"/>
+                            <ComboBoxItem Content="3"/>
+                            <ComboBoxItem Content="4"/>
+                            <ComboBoxItem Content="5"/>
+                            <ComboBoxItem Content="6"/>
+                            <ComboBoxItem Content="7"/>
+                            <ComboBoxItem Content="8"/>
+                        </ComboBox>
+                    </StackPanel>
                     
                     <CheckBox x:Name="ProcessSmallerFilesFirstCheckBox"
                               Content="Process smaller files first"
@@ -107,6 +121,23 @@
                         <TextBox x:Name="VerifyFolderTextBox" Grid.Column="1" Margin="5,0,5,0" Padding="5" IsReadOnly="True"/>
                         <Button x:Name="BrowseVerifyFolderButton" Grid.Column="2" Content="Browse" Click="BrowseVerifyFolderButton_Click" Padding="10,5"/>
                     </Grid>
+
+                    <!-- Parallel Processing Options for Verification -->
+                    <CheckBox x:Name="VerifyParallelProcessingCheckBox"
+                              Content="Enable parallel processing (multiple files at once)"
+                              Margin="10,5,10,0"
+                              HorizontalAlignment="Left"
+                              IsChecked="False"/>
+                    <StackPanel Orientation="Horizontal" Margin="30,5,10,5"
+                                IsEnabled="{Binding ElementName=VerifyParallelProcessingCheckBox, Path=IsChecked}">
+                        <Label Content="Max concurrent files:" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="VerifyDegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1">
+                            <ComboBoxItem Content="2"/>
+                            <ComboBoxItem Content="3"/>
+                            <ComboBoxItem Content="4"/>
+                            <ComboBoxItem Content="5"/>
+                        </ComboBox>
+                    </StackPanel>
 
                     <!-- NEW: Checkboxes for moving files -->
                     <CheckBox x:Name="MoveFailedCheckBox"
