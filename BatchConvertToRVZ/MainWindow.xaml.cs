@@ -1488,7 +1488,6 @@ public partial class MainWindow : IDisposable
             else
             {
                 LogMessage($"[FAIL] Verification failed for: {fileName}. Output: {output.Trim()}");
-                await ReportBugAsync($"Verification failed for {fileName}", new Exception(output));
                 verificationResult = false;
             }
         }
