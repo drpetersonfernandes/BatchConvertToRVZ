@@ -55,8 +55,7 @@ The application also supports extracting ISO images from archives and allows par
 
 ## Requirements
 
-- **Operating System**: Windows 7 or later
-- **Runtime**: [.NET 9.0 Runtime](https://dotnet.microsoft.com/download/dotnet/9.0)
+- **Runtime**: [.NET 10.0 Runtime](https://dotnet.microsoft.com/download/dotnet/9.0)
 - **Dependencies**: All required files are included:
     - `DolphinTool.exe` / `DolphinTool_arm64.exe` (for conversion and verification)
     - `7z_x64.dll` / `7z_arm64.dll` (for archive extraction)
