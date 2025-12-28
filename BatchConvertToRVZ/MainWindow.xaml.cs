@@ -36,8 +36,8 @@ public partial class MainWindow : IDisposable
 
     private static readonly string[] ArchiveExtensions = { ".zip", ".7z", ".rar" };
 
-    // Primary target extension inside archives for RVZ conversion
-    private static readonly string[] PrimaryTargetExtensionsInsideArchive = { ".iso" };
+    // Primary target extensions inside archives for RVZ conversion
+    private static readonly string[] PrimaryTargetExtensionsInsideArchive = { ".iso", ".gcm", ".wbfs", ".nkit.iso" };
 
     // Supported extension for verification
     private static readonly string[] RvzExtension = { ".rvz" };
@@ -528,7 +528,12 @@ public partial class MainWindow : IDisposable
                 else
                 {
                     LogMessage($"Error extracting archive {Path.GetFileName(inputFile)}: {extractResult.ErrorMessage}");
-                    await ReportBugAsync($"Error extracting archive: {Path.GetFileName(inputFile)}", new Exception(extractResult.ErrorMessage));
+                    // Do not report this specific error as it's a user issue (archive content), not a bug.
+                    if (!extractResult.ErrorMessage.Contains("No supported game image"))
+                    {
+                        await ReportBugAsync($"Error extracting archive: {Path.GetFileName(inputFile)}", new Exception(extractResult.ErrorMessage));
+                    }
+
                     return false;
                 }
             }
@@ -1008,7 +1013,7 @@ public partial class MainWindow : IDisposable
 
             return supportedFile != null
                 ? (true, supportedFile, tempDir, string.Empty)
-                : (false, string.Empty, tempDir, "No supported primary files (.iso) found in archive.");
+                : (false, string.Empty, tempDir, "No supported game image (.iso, .gcm, .wbfs, .nkit.iso) found in archive.");
         }
         catch (OperationCanceledException)
         {
