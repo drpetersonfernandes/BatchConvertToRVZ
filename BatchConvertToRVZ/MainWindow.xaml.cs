@@ -19,6 +19,7 @@ namespace BatchConvertToRVZ;
 public partial class MainWindow : IDisposable
 {
     private bool _disposed;
+    private bool _isClosing;
     private Task? _runningTask;
     private bool _dependenciesOk;
     private string? _dolphinToolPath;
@@ -172,21 +173,47 @@ public partial class MainWindow : IDisposable
     {
         try
         {
-            // If a job is in flight, cancel it and keep the window open
-            // until the task completes.
-            if (_runningTask is { IsCompleted: false })
+            // Prevent re-entrancy if we're already in the process of closing
+            if (_isClosing)
             {
-                e.Cancel = true; // keep window alive
-                await _cts.CancelAsync(); // ask workers to stop
+                return;
+            }
 
-                await _runningTask; // wait for graceful stop
+            try
+            {
+                // If a job is in flight, cancel it and keep the window open
+                // until the task completes.
+                if (_runningTask is { IsCompleted: false })
+                {
+                    e.Cancel = true; // keep window alive
+                    _isClosing = true; // mark that we're in the closing process
 
-                Close(); // now close for real
+                    await _cts.CancelAsync(); // ask workers to stop
+                    await _runningTask; // wait for graceful stop
+
+                    // Close the window on the dispatcher to avoid re-entrancy
+                    await Dispatcher.BeginInvoke(() =>
+                    {
+                        try
+                        {
+                            Close();
+                        }
+                        catch (Exception ex)
+                        {
+                            _ = ReportBugAsync("Error during window closing (dispatcher invoke)", ex);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _isClosing = false; // Reset flag on error so user can try closing again
+                _ = ReportBugAsync("Error during window closing", ex);
             }
         }
         catch (Exception ex)
         {
-            _ = ReportBugAsync("Error during window closing", ex);
+            await ReportBugAsync("Error during window closing", ex);
         }
     }
 
@@ -563,6 +590,22 @@ public partial class MainWindow : IDisposable
             if (File.Exists(outputFile))
             {
                 LogMessage($"Output file already exists, skipping: {Path.GetFileName(outputFile)}");
+
+                // If user requested to delete original files, delete them even when skipping
+                if (deleteOriginal)
+                {
+                    if (isArchiveFile)
+                    {
+                        await Task.Delay(50, cancellationToken);
+                        await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", cancellationToken);
+                    }
+                    else
+                    {
+                        await Task.Delay(50, cancellationToken);
+                        await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", cancellationToken);
+                    }
+                }
+
                 return true;
             }
 
@@ -728,8 +771,12 @@ public partial class MainWindow : IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                 }
 
-                await Task.Delay(WriteSpeedUpdateIntervalMs, cancellationToken);
+                // Wait for either the process to exit or the delay to complete
+                var processExitTask = process.WaitForExitAsync(cancellationToken);
+                var delayTask = Task.Delay(WriteSpeedUpdateIntervalMs, cancellationToken);
+                await Task.WhenAny(processExitTask, delayTask);
 
+                // If process exited, break immediately without waiting for the full delay
                 if (process.HasExited || cancellationToken.IsCancellationRequested) break;
 
                 try
