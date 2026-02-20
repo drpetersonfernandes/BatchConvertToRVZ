@@ -54,6 +54,13 @@ public partial class MainWindow : IDisposable
     // For Write Speed Calculation
     private const int WriteSpeedUpdateIntervalMs = 1000;
 
+    // Thread-safe fields for aggregate write speed tracking during parallel processing
+    private long _aggregateTotalBytesWritten;
+    private long _aggregateLastTotalBytes;
+    private DateTime _aggregateLastCheckTime = DateTime.UtcNow;
+    private readonly object _aggregateSpeedLock = new();
+    private int _activeConversionCount;
+
     // Fields for verification move options
     private bool _moveFailedFiles;
     private bool _moveSuccessFiles;
@@ -416,11 +423,23 @@ public partial class MainWindow : IDisposable
 
             if (useParallelFileProcessing && files.Length > 1)
             {
+                // Initialize aggregate speed tracking for parallel processing
+                Interlocked.Exchange(ref _aggregateTotalBytesWritten, 0);
+                Interlocked.Exchange(ref _aggregateLastTotalBytes, 0);
+                lock (_aggregateSpeedLock)
+                {
+                    _aggregateLastCheckTime = DateTime.UtcNow;
+                }
+
                 var parallelOptions = new ParallelOptions
                 {
                     MaxDegreeOfParallelism = maxConcurrency,
                     CancellationToken = _cts.Token
                 };
+
+                // Start aggregate speed monitoring task
+                var speedMonitoringCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                var speedMonitorTask = MonitorAggregateWriteSpeedAsync(speedMonitoringCts.Token);
 
                 await Parallel.ForEachAsync(files, parallelOptions, async (inputFile, token) =>
                 {
@@ -445,6 +464,17 @@ public partial class MainWindow : IDisposable
                     UpdateStatsDisplay();
                     UpdateProcessingTimeDisplay();
                 });
+
+                // Stop the aggregate speed monitoring
+                speedMonitoringCts.Cancel();
+                try
+                {
+                    await speedMonitorTask;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when cancelling the monitoring task
+                }
             }
             else
             {
@@ -575,7 +605,7 @@ public partial class MainWindow : IDisposable
                     catch (IOException)
                     {
                         // File is still locked, wait and retry
-                        await Task.Delay(300 * (i + 1), cancellationToken); // Exponential backoff
+                        await Task.Delay(300 * (i + 1), CancellationToken.None); // Exponential backoff - use None as token is already cancelled
                     }
                 }
             }
@@ -609,6 +639,9 @@ public partial class MainWindow : IDisposable
 
     private async Task<bool> ConvertToRvzAsync(string dolphinToolPath, string inputFile, string outputFile, CancellationToken cancellationToken)
     {
+        // Increment active conversion count for aggregate speed tracking
+        Interlocked.Increment(ref _activeConversionCount);
+
         using var process = new Process();
         try
         {
@@ -710,8 +743,14 @@ public partial class MainWindow : IDisposable
                         if (timeDelta.TotalSeconds > 0)
                         {
                             var bytesDelta = currentFileSize - lastFileSize;
-                            var speed = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
-                            UpdateWriteSpeedDisplay(speed);
+                            // Report bytes written to aggregate counter for parallel processing
+                            Interlocked.Add(ref _aggregateTotalBytesWritten, bytesDelta);
+                            // Only update UI directly if not in parallel mode (single file processing)
+                            if (Interlocked.CompareExchange(ref _activeConversionCount, 0, 0) <= 1)
+                            {
+                                var speed = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
+                                UpdateWriteSpeedDisplay(speed);
+                            }
                         }
 
                         lastFileSize = currentFileSize;
@@ -789,7 +828,7 @@ public partial class MainWindow : IDisposable
                     catch (IOException)
                     {
                         // File is still locked, wait and retry
-                        await Task.Delay(300 * (i + 1), cancellationToken); // Exponential backoff
+                        await Task.Delay(300 * (i + 1), CancellationToken.None); // Exponential backoff - use None as token is already cancelled
                     }
                 }
             }
@@ -811,16 +850,22 @@ public partial class MainWindow : IDisposable
         }
         finally
         {
-            UpdateWriteSpeedDisplay(0);
+            // Decrement active conversion count
+            Interlocked.Decrement(ref _activeConversionCount);
+            // Only reset display if no more active conversions
+            if (Interlocked.CompareExchange(ref _activeConversionCount, 0, 0) == 0)
+            {
+                UpdateWriteSpeedDisplay(0);
+            }
             // Process disposal is handled by 'using' statement
         }
     }
 
-    private async Task TryDeleteFile(string filePath, string description, CancellationToken cancellationToken)
+    private async Task<bool> TryDeleteFile(string filePath, string description, CancellationToken cancellationToken)
     {
         try
         {
-            if (!File.Exists(filePath)) return;
+            if (!File.Exists(filePath)) return true;
 
             // Try multiple times with increasing delays and different approaches
             for (var attempt = 0; attempt < 10; attempt++) // Increased to 10 attempts
@@ -857,10 +902,10 @@ public partial class MainWindow : IDisposable
                     // Finally, try to delete the file
                     File.Delete(filePath);
                     LogMessage($"Deleted {description}: {Path.GetFileName(filePath)}");
-                    return;
+                    return true;
                 }
-                catch (IOException ioEx) when (ioEx.Message.Contains("being used by another process") ||
-                                               ioEx.Message.Contains("The process cannot access the file"))
+                catch (IOException ioEx) when ((ioEx.HResult & 0xFFFF) == 32 || // ERROR_SHARING_VIOLATION
+                                               (ioEx.HResult & 0xFFFF) == 33) // ERROR_LOCK_VIOLATION
                 {
                     if (attempt < 9) // Don't log on the last attempt
                     {
@@ -872,6 +917,7 @@ public partial class MainWindow : IDisposable
                     {
                         LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts: {ioEx.Message}");
                         _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)} after multiple attempts", ioEx), cancellationToken);
+                        return false;
                     }
                 }
                 catch (UnauthorizedAccessException authEx)
@@ -896,20 +942,25 @@ public partial class MainWindow : IDisposable
                     {
                         LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts due to access denied: {authEx.Message}");
                         _ = Task.Run(() => ReportBugAsync($"Access denied when deleting {description}: {Path.GetFileName(filePath)} after multiple attempts", authEx), cancellationToken);
+                        return false;
                     }
                 }
                 catch (Exception ex)
                 {
                     LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)}: {ex.Message}");
                     _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)}", ex), cancellationToken);
-                    return; // Non-IO exceptions don't benefit from retry
+                    return false; // Non-IO exceptions don't benefit from retry
                 }
             }
+
+            // If we exhausted all attempts without returning, deletion failed
+            return false;
         }
         catch (Exception ex)
         {
             LogMessage($"Error in TryDeleteFile for {description} {filePath}: {ex.Message}");
             _ = Task.Run(() => ReportBugAsync($"Error in TryDeleteFile: {description}", ex), cancellationToken);
+            return false;
         }
     }
 
@@ -985,6 +1036,13 @@ public partial class MainWindow : IDisposable
                             };
 
                             // Extract all entries to the temp directory
+                            // Get full path of tempDir for ZipSlip vulnerability protection
+                            var tempDirFullPath = Path.GetFullPath(tempDir);
+                            if (!tempDirFullPath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                            {
+                                tempDirFullPath += Path.DirectorySeparatorChar;
+                            }
+
                             foreach (var entry in archive.Entries.Where(static e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key)))
                             {
                                 cancellationToken.ThrowIfCancellationRequested();
@@ -992,6 +1050,15 @@ public partial class MainWindow : IDisposable
                                 if (entry.Key != null)
                                 {
                                     var entryPath = Path.Combine(tempDir, entry.Key);
+                                    var entryFullPath = Path.GetFullPath(entryPath);
+
+                                    // ZipSlip protection: ensure the entry path is within the temp directory
+                                    if (!entryFullPath.StartsWith(tempDirFullPath, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        LogMessage($"Skipping potentially malicious archive entry with directory traversal: {entry.Key}");
+                                        continue;
+                                    }
+
                                     var entryDir = Path.GetDirectoryName(entryPath);
 
                                     if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
@@ -1031,9 +1098,14 @@ public partial class MainWindow : IDisposable
             var supportedFile = Directory.GetFiles(tempDir, "*.*", SearchOption.AllDirectories)
                 .FirstOrDefault(static f => PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(f).ToLowerInvariant()));
 
-            return supportedFile != null
-                ? (true, supportedFile, tempDir, string.Empty)
-                : (false, string.Empty, tempDir, "No supported game image (.iso, .gcm, .wbfs, .nkit.iso) found in archive.");
+            if (supportedFile != null)
+            {
+                return (true, supportedFile, tempDir, string.Empty);
+            }
+
+            // No supported game image found - clean up the temp directory to prevent disk leak
+            TryDeleteDirectory(tempDir, "extraction directory with no supported game images");
+            return (false, string.Empty, tempDir, "No supported game image (.iso, .gcm, .wbfs, .nkit.iso) found in archive.");
         }
         catch (OperationCanceledException)
         {
@@ -1593,7 +1665,12 @@ public partial class MainWindow : IDisposable
             if (File.Exists(destinationFilePath))
             {
                 LogMessage($"Deleting existing file at destination: {Path.GetFileName(destinationFilePath)}");
-                await TryDeleteFile(destinationFilePath, $"existing file in {subfolderName} folder", _cts.Token);
+                var deletionSucceeded = await TryDeleteFile(destinationFilePath, $"existing file in {subfolderName} folder", _cts.Token);
+                if (!deletionSucceeded)
+                {
+                    LogMessage($"Cannot move '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder: failed to delete existing file at destination.");
+                    return;
+                }
             }
 
             File.Move(sourceFilePath, destinationFilePath);
@@ -1612,6 +1689,15 @@ public partial class MainWindow : IDisposable
         _successCount = 0;
         _failureCount = 0;
         _operationTimer.Reset();
+        // Reset aggregate speed tracking fields
+        Interlocked.Exchange(ref _aggregateTotalBytesWritten, 0);
+        Interlocked.Exchange(ref _aggregateLastTotalBytes, 0);
+        Interlocked.Exchange(ref _activeConversionCount, 0);
+        lock (_aggregateSpeedLock)
+        {
+            _aggregateLastCheckTime = DateTime.UtcNow;
+        }
+
         UpdateStatsDisplay();
         UpdateProcessingTimeDisplay();
         UpdateWriteSpeedDisplay(0);
@@ -1643,6 +1729,51 @@ public partial class MainWindow : IDisposable
         {
             WriteSpeedValue.Text = $"{speedInMBps:F1} MB/s";
         });
+    }
+
+    /// <summary>
+    /// Monitors aggregate write speed across all parallel conversion operations.
+    /// This prevents UI flickering by calculating total throughput from all active conversions.
+    /// </summary>
+    private async Task MonitorAggregateWriteSpeedAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(WriteSpeedUpdateIntervalMs, cancellationToken);
+
+                // Only update if there are active conversions
+                if (Interlocked.CompareExchange(ref _activeConversionCount, 0, 0) == 0)
+                    continue;
+
+                lock (_aggregateSpeedLock)
+                {
+                    var currentTime = DateTime.UtcNow;
+                    var timeDelta = currentTime - _aggregateLastCheckTime;
+
+                    if (timeDelta.TotalSeconds > 0)
+                    {
+                        var currentTotalBytes = Interlocked.Read(ref _aggregateTotalBytesWritten);
+                        var bytesDelta = currentTotalBytes - _aggregateLastTotalBytes;
+                        var speedInMBps = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
+
+                        UpdateWriteSpeedDisplay(speedInMBps);
+
+                        _aggregateLastTotalBytes = currentTotalBytes;
+                        _aggregateLastCheckTime = currentTime;
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when the monitoring is cancelled
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Aggregate speed monitoring error: {ex.Message}");
+        }
     }
 
     private void UpdateProgressDisplay(int current, int total, string currentFileName, string operationVerb)
