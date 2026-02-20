@@ -1,5 +1,9 @@
 # Batch Convert to RVZ
 
+[![GitHub release](https://img.shields.io/github/v/release/drpetersonfernandes/BatchConvertToRVZ)](https://github.com/drpetersonfernandes/BatchConvertToRVZ/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-blue)](https://github.com/drpetersonfernandes/BatchConvertToRVZ/releases)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE.txt)
+
 A Windows desktop utility for batch converting GameCube and Wii ISO images to RVZ format with verification capabilities.
 
 ![Batch Convert to RVZ](screenshot.png)
@@ -16,7 +20,7 @@ The application also supports extracting ISO images from archives and allows par
 - **Batch Processing**: Convert multiple files in a single operation
 - **Supported Formats**: Handles GameCube and Wii ISO files (`.iso`) and archives containing them
 - **Archive Support**: Automatically extracts and processes ISO files from `.zip`, `.7z`, and `.rar` archives
-- **7-Zip Integration**: Use the SevenZipSharp library with architecture-specific 7z DLLs for reliable archive extraction
+- **SharpCompress Integration**: Uses the SharpCompress library for reliable, cross-platform archive extraction
 - **Parallel Processing**: Optionally process multiple files in parallel (up to 3 concurrent files) to speed up batch completion
 - **Smart File Handling**: Skips files that already exist in the output directory
 - **Delete Original Option**: Option to remove source files (including archives) after successful conversion
@@ -31,7 +35,7 @@ The application also supports extracting ISO images from archives and allows par
 ### User Experience
 - **Tabbed Interface**: Separate tabs for conversion and verification operations
 - **Real-time Progress Tracking**: Detailed progress indication with file-by-file status
-- **Write Speed Monitoring**: Real-time display of conversion writes speeds
+- **Write Speed Monitoring**: Real-time display of conversion write speeds
 - **Processing Statistics**: Live updates on total files, success/failure counts, and processing time
 - **Comprehensive Logging**: Detailed real-time logging with timestamps for all operations
 - **Cancellation Support**: Gracefully cancel operations at any time
@@ -55,10 +59,9 @@ The application also supports extracting ISO images from archives and allows par
 
 ## Requirements
 
-- **Runtime**: [.NET 10.0 Runtime](https://dotnet.microsoft.com/download/dotnet/9.0)
+- **Runtime**: [.NET 10.0 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
 - **Dependencies**: All required files are included:
     - `DolphinTool.exe` / `DolphinTool_arm64.exe` (for conversion and verification)
-    - `7z_x64.dll` / `7z_arm64.dll` (for archive extraction)
 
 ## Installation
 
@@ -102,9 +105,9 @@ RVZ is a compressed disk image format developed specifically for the Dolphin Emu
 
 ## Troubleshooting
 
-- **Missing Dependencies**: Ensure `DolphinTool.exe` and the appropriate 7z DLL files are present in the application directory
+- **Missing Dependencies**: Ensure `DolphinTool.exe` (or `DolphinTool_arm64.exe` for ARM64 systems) is present in the application directory
 - **Permission Issues**: Make sure you have read permissions for input directories and write permissions for output directories
-- **Archive Extraction Failures**: Verify that the 7z libraries are not corrupted or missing
+- **Archive Extraction Failures**: Verify that the archive files are not corrupted
 - **Conversion Errors**: Check the detailed log output for specific error messages
 - **Performance Issues**: Try disabling parallel processing if you experience system instability
 - **Auto-Reporting**: The application automatically reports unexpected errors to developers for continuous improvement
@@ -112,7 +115,7 @@ RVZ is a compressed disk image format developed specifically for the Dolphin Emu
 ## Acknowledgements
 
 - **DolphinTool**: Uses `DolphinTool.exe` from the [Dolphin Emulator project](https://dolphin-emu.org/) for RVZ conversion and verification
-- **SevenZipSharp**: Uses the SevenZipSharp library with 7-Zip DLLs for reliable archive extraction
+- **SharpCompress**: Uses the [SharpCompress](https://github.com/adamhathcock/sharpcompress) library for reliable archive extraction
 - **Development**: Created and maintained by [Pure Logic Code](https://www.purelogiccode.com)
 
 ## Support the Project
