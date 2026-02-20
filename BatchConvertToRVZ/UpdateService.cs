@@ -10,7 +10,7 @@ namespace BatchConvertToRVZ;
 /// <summary>
 /// Service for checking for application updates on GitHub.
 /// </summary>
-public sealed class UpdateService : IDisposable
+public sealed partial class UpdateService : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly string _githubApiUrl;
@@ -79,7 +79,7 @@ public sealed class UpdateService : IDisposable
     private static Version? ParseVersionFromTag(string tagName)
     {
         // Remove any non-numeric/non-dot prefixes (like 'v' or 'release-').
-        var versionString = Regex.Replace(tagName, "^[^0-9]+", "");
+        var versionString = MyRegex().Replace(tagName, "");
         return Version.TryParse(versionString, out var version) ? version : null;
     }
 
@@ -87,4 +87,7 @@ public sealed class UpdateService : IDisposable
     {
         _httpClient.Dispose();
     }
+
+    [GeneratedRegex("^[^0-9]+")]
+    private static partial Regex MyRegex();
 }

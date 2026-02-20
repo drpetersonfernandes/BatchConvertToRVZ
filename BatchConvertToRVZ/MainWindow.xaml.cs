@@ -427,7 +427,7 @@ public partial class MainWindow : IDisposable
                     var fileName = Path.GetFileName(inputFile);
                     LogMessage($"[Parallel] Starting: {fileName}");
 
-                    var success = await ProcessFileAsync(dolphinToolPath, inputFile, outputFolder, deleteFiles);
+                    var success = await ProcessFileAsync(dolphinToolPath, inputFile, outputFolder, deleteFiles, token);
 
                     if (success)
                     {
@@ -461,7 +461,7 @@ public partial class MainWindow : IDisposable
 
                     LogMessage($"[Sequential] Processing: {fileName}");
 
-                    var success = await ProcessFileAsync(dolphinToolPath, t, outputFolder, deleteFiles);
+                    var success = await ProcessFileAsync(dolphinToolPath, t, outputFolder, deleteFiles, _cts.Token);
 
                     if (success)
                     {
@@ -493,7 +493,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task<bool> ProcessFileAsync(string dolphinToolPath, string inputFile, string outputFolder, bool deleteOriginal)
+    private async Task<bool> ProcessFileAsync(string dolphinToolPath, string inputFile, string outputFolder, bool deleteOriginal, CancellationToken cancellationToken)
     {
         var fileToProcess = inputFile;
         var isArchiveFile = false;
@@ -505,7 +505,7 @@ public partial class MainWindow : IDisposable
             if (ArchiveExtensions.Contains(fileExtension))
             {
                 LogMessage($"Processing archive: {Path.GetFileName(inputFile)}");
-                var extractResult = await ExtractArchiveAsync(inputFile);
+                var extractResult = await ExtractArchiveAsync(inputFile, cancellationToken);
                 if (extractResult.Success)
                 {
                     fileToProcess = extractResult.FilePath;
@@ -526,6 +526,8 @@ public partial class MainWindow : IDisposable
                 }
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             var outputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
 
             if (File.Exists(outputFile))
@@ -534,21 +536,21 @@ public partial class MainWindow : IDisposable
                 return true;
             }
 
-            var success = await ConvertToRvzAsync(dolphinToolPath, fileToProcess, outputFile);
+            var success = await ConvertToRvzAsync(dolphinToolPath, fileToProcess, outputFile, cancellationToken);
 
             if (!success || !deleteOriginal) return success;
 
             if (isArchiveFile)
             {
                 // Small delay before deleting original archive
-                await Task.Delay(50, _cts.Token);
-                await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}");
+                await Task.Delay(50, cancellationToken);
+                await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", cancellationToken);
             }
             else
             {
                 // Small delay before deleting original ISO
-                await Task.Delay(50, _cts.Token);
-                await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}");
+                await Task.Delay(50, cancellationToken);
+                await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", cancellationToken);
             }
 
             return success;
@@ -573,7 +575,7 @@ public partial class MainWindow : IDisposable
                     catch (IOException)
                     {
                         // File is still locked, wait and retry
-                        await Task.Delay(300 * (i + 1), _cts.Token); // Exponential backoff
+                        await Task.Delay(300 * (i + 1), cancellationToken); // Exponential backoff
                     }
                 }
             }
@@ -588,8 +590,8 @@ public partial class MainWindow : IDisposable
             if (File.Exists(potentialOutputFile))
             {
                 // Small delay before attempting deletion
-                await Task.Delay(100, _cts.Token);
-                await TryDeleteFile(potentialOutputFile, "partially created RVZ file after error");
+                await Task.Delay(100, cancellationToken);
+                await TryDeleteFile(potentialOutputFile, "partially created RVZ file after error", cancellationToken);
             }
 
             return false;
@@ -599,13 +601,13 @@ public partial class MainWindow : IDisposable
             if (isArchiveFile && !string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
             {
                 // Small delay before cleaning up temp directory
-                await Task.Delay(100, _cts.Token);
+                await Task.Delay(100, cancellationToken);
                 TryDeleteDirectory(tempDir, "temporary extraction directory");
             }
         }
     }
 
-    private async Task<bool> ConvertToRvzAsync(string dolphinToolPath, string inputFile, string outputFile)
+    private async Task<bool> ConvertToRvzAsync(string dolphinToolPath, string inputFile, string outputFile, CancellationToken cancellationToken)
     {
         using var process = new Process();
         try
@@ -665,7 +667,7 @@ public partial class MainWindow : IDisposable
 
             while (!process.HasExited)
             {
-                if (_cts.Token.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested)
                 {
                     try
                     {
@@ -675,13 +677,13 @@ public partial class MainWindow : IDisposable
                             process.Kill(true);
 
                             // Give it a moment to exit gracefully
-                            await Task.Delay(150, _cts.Token);
+                            await Task.Delay(150, cancellationToken);
 
                             // If still running, force kill
                             if (!process.HasExited)
                             {
                                 process.Kill();
-                                await Task.Delay(100, _cts.Token);
+                                await Task.Delay(100, cancellationToken);
                             }
                         }
                     }
@@ -690,12 +692,12 @@ public partial class MainWindow : IDisposable
                         LogMessage($"Error killing process for {Path.GetFileName(inputFile)}: {killEx.Message}");
                     }
 
-                    _cts.Token.ThrowIfCancellationRequested();
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
 
-                await Task.Delay(WriteSpeedUpdateIntervalMs, _cts.Token);
+                await Task.Delay(WriteSpeedUpdateIntervalMs, cancellationToken);
 
-                if (process.HasExited || _cts.Token.IsCancellationRequested) break;
+                if (process.HasExited || cancellationToken.IsCancellationRequested) break;
 
                 try
                 {
@@ -729,7 +731,7 @@ public partial class MainWindow : IDisposable
             // Wait for process exit with cancellation token
             try
             {
-                await process.WaitForExitAsync(_cts.Token);
+                await process.WaitForExitAsync(cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -765,7 +767,7 @@ public partial class MainWindow : IDisposable
                 // Wait for the process to exit (with timeout)
                 try
                 {
-                    await process.WaitForExitAsync(_cts.Token);
+                    await process.WaitForExitAsync(CancellationToken.None);
                 }
                 catch
                 {
@@ -787,7 +789,7 @@ public partial class MainWindow : IDisposable
                     catch (IOException)
                     {
                         // File is still locked, wait and retry
-                        await Task.Delay(300 * (i + 1), _cts.Token); // Exponential backoff
+                        await Task.Delay(300 * (i + 1), cancellationToken); // Exponential backoff
                     }
                 }
             }
@@ -801,8 +803,8 @@ public partial class MainWindow : IDisposable
             if (File.Exists(outputFile))
             {
                 // Small delay before attempting deletion
-                await Task.Delay(100, _cts.Token);
-                await TryDeleteFile(outputFile, "partially created RVZ file after error");
+                await Task.Delay(100, cancellationToken);
+                await TryDeleteFile(outputFile, "partially created RVZ file after error", cancellationToken);
             }
 
             return false;
@@ -814,7 +816,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task TryDeleteFile(string filePath, string description)
+    private async Task TryDeleteFile(string filePath, string description, CancellationToken cancellationToken)
     {
         try
         {
@@ -840,7 +842,7 @@ public partial class MainWindow : IDisposable
                         {
                             var delay = 50 * (attempt + 1); // 50ms, 100ms, 150ms, ..., 500ms
                             LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
-                            await Task.Delay(delay, _cts.Token);
+                            await Task.Delay(delay, cancellationToken);
                             continue;
                         }
                     }
@@ -864,12 +866,12 @@ public partial class MainWindow : IDisposable
                     {
                         var delay = 100 * (attempt + 1); // 100ms, 200ms, 300ms, ..., 1000ms
                         LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
-                        await Task.Delay(delay, _cts.Token);
+                        await Task.Delay(delay, cancellationToken);
                     }
                     else
                     {
                         LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts: {ioEx.Message}");
-                        _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)} after multiple attempts", ioEx));
+                        _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)} after multiple attempts", ioEx), cancellationToken);
                     }
                 }
                 catch (UnauthorizedAccessException authEx)
@@ -888,18 +890,18 @@ public partial class MainWindow : IDisposable
                     {
                         var delay = 150 * (attempt + 1);
                         LogMessage($"Access denied for {Path.GetFileName(filePath)}. Attempt {attempt + 1}/10. Waiting {delay}ms...");
-                        await Task.Delay(delay, _cts.Token);
+                        await Task.Delay(delay, cancellationToken);
                     }
                     else
                     {
                         LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts due to access denied: {authEx.Message}");
-                        _ = Task.Run(() => ReportBugAsync($"Access denied when deleting {description}: {Path.GetFileName(filePath)} after multiple attempts", authEx));
+                        _ = Task.Run(() => ReportBugAsync($"Access denied when deleting {description}: {Path.GetFileName(filePath)} after multiple attempts", authEx), cancellationToken);
                     }
                 }
                 catch (Exception ex)
                 {
                     LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)}: {ex.Message}");
-                    _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)}", ex));
+                    _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)}", ex), cancellationToken);
                     return; // Non-IO exceptions don't benefit from retry
                 }
             }
@@ -907,7 +909,7 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error in TryDeleteFile for {description} {filePath}: {ex.Message}");
-            _ = Task.Run(() => ReportBugAsync($"Error in TryDeleteFile: {description}", ex));
+            _ = Task.Run(() => ReportBugAsync($"Error in TryDeleteFile: {description}", ex), cancellationToken);
         }
     }
 
@@ -940,7 +942,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractArchiveAsync(string archivePath)
+    private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractArchiveAsync(string archivePath, CancellationToken cancellationToken)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         var extension = Path.GetExtension(archivePath).ToLowerInvariant();
@@ -950,10 +952,10 @@ public partial class MainWindow : IDisposable
         {
             Directory.CreateDirectory(tempDir);
 
-            if (_cts.Token.IsCancellationRequested)
+            if (cancellationToken.IsCancellationRequested)
             {
                 LogMessage($"Cancellation requested. Skipping extraction for {archiveFileName}.");
-                _cts.Token.ThrowIfCancellationRequested();
+                cancellationToken.ThrowIfCancellationRequested();
             }
 
             LogMessage($"Extracting {archiveFileName} to temporary directory: {tempDir}");
@@ -968,7 +970,7 @@ public partial class MainWindow : IDisposable
                     await Task.Run(() =>
                     {
                         // Check for cancellation before starting the potentially long-running operation
-                        _cts.Token.ThrowIfCancellationRequested();
+                        cancellationToken.ThrowIfCancellationRequested();
 
                         // Open the archive using SharpCompress based on extension
                         IArchive? archive = null;
@@ -985,7 +987,7 @@ public partial class MainWindow : IDisposable
                             // Extract all entries to the temp directory
                             foreach (var entry in archive.Entries.Where(static e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key)))
                             {
-                                _cts.Token.ThrowIfCancellationRequested();
+                                cancellationToken.ThrowIfCancellationRequested();
 
                                 if (entry.Key != null)
                                 {
@@ -1011,13 +1013,13 @@ public partial class MainWindow : IDisposable
                         }
 
                         // Check again after the operation if it was lengthy
-                        if (_cts.Token.IsCancellationRequested)
+                        if (cancellationToken.IsCancellationRequested)
                         {
                             LogMessage($"Extraction of {archiveFileName} completed, but cancellation was requested. Cleaning up.");
                         }
 
-                        _cts.Token.ThrowIfCancellationRequested();
-                    }, _cts.Token); // Passing the token here allows Task.Run to respond to cancellation
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }, cancellationToken); // Passing the token here allows Task.Run to respond to cancellation
                     // by throwing an OperationCanceledException, which is caught below.
                     break;
 
@@ -1424,7 +1426,7 @@ public partial class MainWindow : IDisposable
 
                 await Parallel.ForEachAsync(files, parallelOptions, async (inputFile, token) =>
                 {
-                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, verifyFolder, moveFailed, moveSuccess);
+                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, verifyFolder, moveFailed, moveSuccess, token);
                     if (success) Interlocked.Increment(ref _successCount);
                     else Interlocked.Increment(ref _failureCount);
 
@@ -1441,7 +1443,7 @@ public partial class MainWindow : IDisposable
                 {
                     if (_cts.Token.IsCancellationRequested) break;
 
-                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, verifyFolder, moveFailed, moveSuccess);
+                    var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, verifyFolder, moveFailed, moveSuccess, _cts.Token);
                     if (success)
                     {
                         _successCount++;
@@ -1470,7 +1472,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task<bool> VerifyRzvFileAsync(string dolphinToolPath, string inputFile, string baseFolder, bool moveFailed, bool moveSuccess)
+    private async Task<bool> VerifyRzvFileAsync(string dolphinToolPath, string inputFile, string baseFolder, bool moveFailed, bool moveSuccess, CancellationToken token)
     {
         var fileName = Path.GetFileName(inputFile);
         using var process = new Process();
@@ -1512,7 +1514,7 @@ public partial class MainWindow : IDisposable
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            await process.WaitForExitAsync(_cts.Token);
+            await process.WaitForExitAsync(token);
 
             var output = outputBuilder.ToString();
             if (process.ExitCode == 0 && output.Contains("Problems Found: No"))
@@ -1591,7 +1593,7 @@ public partial class MainWindow : IDisposable
             if (File.Exists(destinationFilePath))
             {
                 LogMessage($"Deleting existing file at destination: {Path.GetFileName(destinationFilePath)}");
-                await TryDeleteFile(destinationFilePath, $"existing file in {subfolderName} folder");
+                await TryDeleteFile(destinationFilePath, $"existing file in {subfolderName} folder", _cts.Token);
             }
 
             File.Move(sourceFilePath, destinationFilePath);
