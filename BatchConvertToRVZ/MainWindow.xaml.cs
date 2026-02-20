@@ -12,7 +12,6 @@ using SharpCompress.Archives;
 using SharpCompress.Archives.Zip;
 using SharpCompress.Archives.SevenZip;
 using SharpCompress.Archives.Rar;
-using SharpCompress.Common;
 
 namespace BatchConvertToRVZ;
 
@@ -1076,9 +1075,9 @@ public partial class MainWindow : IDisposable
                         {
                             archive = extension.ToLowerInvariant() switch
                             {
-                                ".zip" => ZipArchive.Open(archivePath),
-                                ".7z" => SevenZipArchive.Open(archivePath),
-                                ".rar" => RarArchive.Open(archivePath),
+                                ".zip" => ZipArchive.OpenArchive(archivePath),
+                                ".7z" => SevenZipArchive.OpenArchive(archivePath),
+                                ".rar" => RarArchive.OpenArchive(archivePath),
                                 _ => throw new InvalidOperationException($"Unsupported archive type: {extension}")
                             };
 
@@ -1113,11 +1112,7 @@ public partial class MainWindow : IDisposable
                                         Directory.CreateDirectory(entryDir);
                                     }
 
-                                    entry.WriteToFile(entryPath, new ExtractionOptions
-                                    {
-                                        Overwrite = true,
-                                        PreserveFileTime = true
-                                    });
+                                    entry.WriteToFile(entryPath);
                                 }
                             }
                         }
