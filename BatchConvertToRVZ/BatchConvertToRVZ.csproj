@@ -25,9 +25,6 @@
     <Resource Include="images\exit.png" />
     <Resource Include="images\logo.png" />
     <Resource Include="images\update.png" />
-    <None Update="7z_arm64.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
     <None Update="DolphinTool_arm64.exe">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -38,14 +35,11 @@
     <None Update="DolphinTool.exe">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="7z_x64.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
     <!-- Removed chdman.exe and 7z files -->
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Squid-Box.SevenZipSharp" Version="1.6.2.24" />
+    <PackageReference Include="SharpCompress" Version="0.39.0" />
   </ItemGroup>
 
 </Project>

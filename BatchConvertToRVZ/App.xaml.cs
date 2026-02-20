@@ -1,10 +1,8 @@
 using System.Globalization;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
-using SevenZip;
 
 namespace BatchConvertToRVZ;
 
@@ -27,9 +25,6 @@ public partial class App
         DispatcherUnhandledException += App_DispatcherUnhandledException;
         TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
 
-        // Initialize SevenZipSharp library path
-        InitializeSevenZipSharp();
-
         // Register the Exit event handler
         Exit += App_Exit;
     }
@@ -43,60 +38,6 @@ public partial class App
         AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
         DispatcherUnhandledException -= App_DispatcherUnhandledException;
         TaskScheduler.UnobservedTaskException -= TaskScheduler_UnobservedTaskException;
-    }
-
-    private void InitializeSevenZipSharp()
-    {
-        try
-        {
-            string dllName;
-            switch (RuntimeInformation.ProcessArchitecture)
-            {
-                case Architecture.X64:
-                    dllName = "7z_x64.dll";
-                    break;
-                case Architecture.Arm64:
-                    dllName = "7z_arm64.dll";
-                    break;
-                default:
-                {
-                    var errorMessage = $"Unsupported processor architecture: {RuntimeInformation.ProcessArchitecture}. Only x64 and ARM64 are supported.";
-                    if (BugReportServiceInstance != null)
-                    {
-                        _ = BugReportServiceInstance?.SendBugReportAsync(errorMessage);
-                    }
-
-                    return;
-                }
-            }
-
-            var dllPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, dllName);
-
-            if (File.Exists(dllPath))
-            {
-                SevenZipBase.SetLibraryPath(dllPath);
-            }
-            else
-            {
-                // Notify developer
-                // If the specific DLL is not found, log an error. Extraction will likely fail.
-                var errorMessage =
-                    $"Could not find the required 7-Zip library: {dllName} in {AppDomain.CurrentDomain.BaseDirectory}";
-
-                if (BugReportServiceInstance != null)
-                {
-                    _ = BugReportServiceInstance?.SendBugReportAsync(errorMessage);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            // Notify developer
-            if (BugReportServiceInstance != null)
-            {
-                _ = BugReportServiceInstance?.SendBugReportAsync(ex.Message);
-            }
-        }
     }
 
     private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
@@ -128,7 +69,7 @@ public partial class App
             // Notify developer
             if (BugReportServiceInstance != null)
             {
-                _ = BugReportServiceInstance?.SendBugReportAsync(message);
+                _ = BugReportServiceInstance.SendBugReportAsync(message);
             }
         }
         catch
@@ -137,7 +78,7 @@ public partial class App
         }
     }
 
-    private string BuildExceptionReport(Exception exception, string source)
+    private static string BuildExceptionReport(Exception exception, string source)
     {
         var sb = new StringBuilder();
         sb.AppendLine(CultureInfo.InvariantCulture, $"Error Source: {source}");
@@ -154,7 +95,7 @@ public partial class App
         return sb.ToString();
     }
 
-    private void AppendExceptionDetails(StringBuilder sb, Exception exception, int level = 0)
+    private static void AppendExceptionDetails(StringBuilder sb, Exception exception, int level = 0)
     {
         while (true)
         {

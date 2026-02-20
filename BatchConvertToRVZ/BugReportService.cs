@@ -49,7 +49,7 @@ public class BugReportService(string apiUrl, string apiKey, string applicationNa
     public void Dispose()
     {
         // Dispose the HttpClient to release resources
-        _httpClient?.Dispose();
+        _httpClient.Dispose();
 
         // Suppress finalization
         GC.SuppressFinalize(this);

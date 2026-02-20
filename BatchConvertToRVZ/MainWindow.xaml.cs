@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
@@ -9,7 +8,11 @@ using System.Text;
 using System.Windows;
 using Microsoft.Win32;
 using System.Text.RegularExpressions;
-using SevenZip;
+using SharpCompress.Archives;
+using SharpCompress.Archives.Zip;
+using SharpCompress.Archives.SevenZip;
+using SharpCompress.Archives.Rar;
+using SharpCompress.Common;
 
 namespace BatchConvertToRVZ;
 
@@ -32,15 +35,15 @@ public partial class MainWindow : IDisposable
     private const int RvzBlockSize = 131072; // Default block size
 
     // Supported input extensions (Updated to include archives)
-    private static readonly string[] AllSupportedInputExtensions = { ".iso", ".zip", ".7z", ".rar" };
+    private static readonly string[] AllSupportedInputExtensions = [".iso", ".zip", ".7z", ".rar"];
 
-    private static readonly string[] ArchiveExtensions = { ".zip", ".7z", ".rar" };
+    private static readonly string[] ArchiveExtensions = [".zip", ".7z", ".rar"];
 
     // Primary target extensions inside archives for RVZ conversion
-    private static readonly string[] PrimaryTargetExtensionsInsideArchive = { ".iso", ".gcm", ".wbfs", ".nkit.iso" };
+    private static readonly string[] PrimaryTargetExtensionsInsideArchive = [".iso", ".gcm", ".wbfs", ".nkit.iso"];
 
     // Supported extension for verification
-    private static readonly string[] RvzExtension = { ".rvz" };
+    private static readonly string[] RvzExtension = [".rvz"];
 
     // Statistics
     private int _totalFilesToProcess;
@@ -84,16 +87,12 @@ public partial class MainWindow : IDisposable
         var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
         var missingFiles = new List<string>();
         string? dolphinToolExeName;
-        string? sevenZipDllName;
 
         try
         {
             dolphinToolExeName = GetDolphinToolExecutableName();
             _dolphinToolPath = Path.Combine(appDirectory, dolphinToolExeName);
             if (!File.Exists(_dolphinToolPath)) missingFiles.Add(dolphinToolExeName);
-
-            sevenZipDllName = GetSevenZipDllName();
-            if (!File.Exists(Path.Combine(appDirectory, sevenZipDllName))) missingFiles.Add(sevenZipDllName);
         }
         catch (PlatformNotSupportedException ex)
         {
@@ -121,8 +120,8 @@ public partial class MainWindow : IDisposable
             _dependenciesOk = true;
             StartConversionButton.IsEnabled = true;
             StartVerifyButton.IsEnabled = true;
-            if (dolphinToolExeName != null) LogMessage($"{dolphinToolExeName} found in the application directory.");
-            if (sevenZipDllName != null) LogMessage($"{sevenZipDllName} found in the application directory.");
+            LogMessage($"{dolphinToolExeName} found in the application directory.");
+            LogMessage("SharpCompress library loaded for archive extraction.");
         }
 
         LogMessage("");
@@ -147,17 +146,6 @@ public partial class MainWindow : IDisposable
         }
 
         return "DolphinTool.exe";
-    }
-
-    [SuppressMessage("ReSharper", "SwitchExpressionHandlesSomeKnownEnumValuesWithExceptionInDefault")]
-    private string GetSevenZipDllName()
-    {
-        return RuntimeInformation.ProcessArchitecture switch
-        {
-            Architecture.X64 => "7z_x64.dll",
-            Architecture.Arm64 => "7z_arm64.dll",
-            _ => throw new PlatformNotSupportedException($"Unsupported architecture: {RuntimeInformation.ProcessArchitecture}")
-        };
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -392,14 +380,14 @@ public partial class MainWindow : IDisposable
             LogMessage("Preparing for batch conversion...");
 
             var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(file => AllSupportedInputExtensions.Contains(Path.GetExtension(file).ToLowerInvariant()))
+                .Where(static file => AllSupportedInputExtensions.Contains(Path.GetExtension(file).ToLowerInvariant()))
                 .ToArray();
 
             // Add sorting by file size if the option is enabled
             if (_processSmallerFilesFirst)
             {
                 LogMessage("Sorting files by size (smallest first)...");
-                Array.Sort(files, (x, y) =>
+                Array.Sort(files, static (x, y) =>
                 {
                     try
                     {
@@ -531,7 +519,7 @@ public partial class MainWindow : IDisposable
                     // Do not report this specific error as it's a user issue (archive content), not a bug.
                     if (!extractResult.ErrorMessage.Contains("No supported game image"))
                     {
-                        await ReportBugAsync($"Error extracting archive: {Path.GetFileName(inputFile)}", new Exception(extractResult.ErrorMessage));
+                        await ReportBugAsync($"Error extracting archive: {Path.GetFileName(inputFile)}", new InvalidOperationException(extractResult.ErrorMessage));
                     }
 
                     return false;
@@ -979,18 +967,48 @@ public partial class MainWindow : IDisposable
                     // but ensure cancellation is handled correctly and resources are disposed.
                     await Task.Run(() =>
                     {
-                        // Use 'using' to guarantee disposal of the extractor, even if an exception occurs
-                        // (including OperationCanceledException).
-                        using var extractor = new SevenZipExtractor(archivePath);
-
                         // Check for cancellation before starting the potentially long-running operation
                         _cts.Token.ThrowIfCancellationRequested();
 
-                        // Perform the extraction. This is a synchronous operation.
-                        // If the token is cancelled during this call, the extractor's
-                        // internal state might be inconsistent, but the 'using' block
-                        // ensures its finalizer or Dispose method attempts cleanup.
-                        extractor.ExtractArchive(tempDir);
+                        // Open the archive using SharpCompress based on extension
+                        IArchive? archive = null;
+                        try
+                        {
+                            archive = extension.ToLowerInvariant() switch
+                            {
+                                ".zip" => ZipArchive.Open(archivePath),
+                                ".7z" => SevenZipArchive.Open(archivePath),
+                                ".rar" => RarArchive.Open(archivePath),
+                                _ => throw new InvalidOperationException($"Unsupported archive type: {extension}")
+                            };
+
+                            // Extract all entries to the temp directory
+                            foreach (var entry in archive.Entries.Where(static e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key)))
+                            {
+                                _cts.Token.ThrowIfCancellationRequested();
+
+                                if (entry.Key != null)
+                                {
+                                    var entryPath = Path.Combine(tempDir, entry.Key);
+                                    var entryDir = Path.GetDirectoryName(entryPath);
+
+                                    if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
+                                    {
+                                        Directory.CreateDirectory(entryDir);
+                                    }
+
+                                    entry.WriteToFile(entryPath, new ExtractionOptions
+                                    {
+                                        Overwrite = true,
+                                        PreserveFileTime = true
+                                    });
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            (archive as IDisposable)?.Dispose();
+                        }
 
                         // Check again after the operation if it was lengthy
                         if (_cts.Token.IsCancellationRequested)
@@ -1009,7 +1027,7 @@ public partial class MainWindow : IDisposable
             // After successful extraction (or if it wasn't cancelled during),
             // look for the target file.
             var supportedFile = Directory.GetFiles(tempDir, "*.*", SearchOption.AllDirectories)
-                .FirstOrDefault(f => PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(f).ToLowerInvariant()));
+                .FirstOrDefault(static f => PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(f).ToLowerInvariant()));
 
             return supportedFile != null
                 ? (true, supportedFile, tempDir, string.Empty)
@@ -1026,10 +1044,22 @@ public partial class MainWindow : IDisposable
             // Re-throw to indicate the operation was cancelled
             throw;
         }
-        catch (SevenZipException ex)
+        catch (InvalidOperationException ex) when (ex.Message.Contains("archive") || ex.Message.Contains("password") || ex.Message.Contains("encrypted"))
         {
             // Handle specific archive errors (corrupt, encrypted, etc.) without sending a bug report.
             var errorMessage = $"Failed to extract archive {archiveFileName}. It may be corrupt, encrypted, or an unsupported format. Error: {ex.Message}";
+            LogMessage(errorMessage);
+
+            // Clean up the temporary directory on failure
+            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+
+            // Return a failure result with the detailed error message
+            return (false, string.Empty, tempDir, errorMessage);
+        }
+        catch (IOException ex) when (ex.Message.Contains("corrupt") || ex.Message.Contains("invalid"))
+        {
+            // Handle specific archive errors (corrupt, etc.) without sending a bug report.
+            var errorMessage = $"Failed to extract archive {archiveFileName}. The archive may be corrupt. Error: {ex.Message}";
             LogMessage(errorMessage);
 
             // Clean up the temporary directory on failure
@@ -1059,7 +1089,7 @@ public partial class MainWindow : IDisposable
     {
         try
         {
-            var match = Regex.Match(progressLine, @"(\d+[\.,]?\d*)%");
+            var match = MyRegex().Match(progressLine);
             if (!match.Success) return false;
 
             var percentageStr = match.Groups[1].Value;
@@ -1121,7 +1151,7 @@ public partial class MainWindow : IDisposable
                 }
             }
 
-            await App.BugReportServiceInstance!.SendBugReportAsync(fullReport.ToString());
+            if (App.BugReportServiceInstance != null) await App.BugReportServiceInstance.SendBugReportAsync(fullReport.ToString());
         }
         catch
         {
@@ -1266,10 +1296,10 @@ public partial class MainWindow : IDisposable
 
         _disposed = true;
 
-        _cts?.Cancel();
-        _cts?.Dispose();
-        _updateService?.Dispose();
-        _operationTimer?.Stop();
+        _cts.Cancel();
+        _cts.Dispose();
+        _updateService.Dispose();
+        _operationTimer.Stop();
         GC.SuppressFinalize(this);
     }
 
@@ -1369,7 +1399,7 @@ public partial class MainWindow : IDisposable
             LogMessage("Preparing for batch verification...");
 
             var files = Directory.GetFiles(verifyFolder, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(file => RvzExtension.Contains(Path.GetExtension(file).ToLowerInvariant()))
+                .Where(static file => RvzExtension.Contains(Path.GetExtension(file).ToLowerInvariant()))
                 .ToArray();
 
             _totalFilesToProcess = files.Length;
@@ -1524,13 +1554,14 @@ public partial class MainWindow : IDisposable
             // NEW: Only move files if the operation was NOT canceled for this specific file
             if (!wasCanceled)
             {
-                if (verificationResult && moveSuccess)
+                switch (verificationResult)
                 {
-                    await MoveFileToSubfolder(inputFile, baseFolder, "_Success");
-                }
-                else if (!verificationResult && moveFailed)
-                {
-                    await MoveFileToSubfolder(inputFile, baseFolder, "_Failed");
+                    case true when moveSuccess:
+                        await MoveFileToSubfolder(inputFile, baseFolder, "_Success");
+                        break;
+                    case false when moveFailed:
+                        await MoveFileToSubfolder(inputFile, baseFolder, "_Failed");
+                        break;
                 }
             }
             else
@@ -1649,4 +1680,7 @@ public partial class MainWindow : IDisposable
 
         return verb.EndsWith('e') ? verb + "d" : verb + "ed";
     }
+
+    [GeneratedRegex(@"(\d+[\.,]?\d*)%")]
+    private static partial Regex MyRegex();
 }
