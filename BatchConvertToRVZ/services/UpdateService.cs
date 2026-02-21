@@ -12,6 +12,13 @@ namespace BatchConvertToRVZ.services;
 /// </summary>
 public partial class UpdateService : IDisposable
 {
+    // Shared static HttpClient instance to prevent socket exhaustion
+    // SocketsHttpHandler with PooledConnectionLifetime ensures proper connection pooling
+    private static readonly SocketsHttpHandler SharedHandler = new()
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+    };
+
     private readonly HttpClient _httpClient;
     private readonly string _githubApiUrl;
 
@@ -22,7 +29,11 @@ public partial class UpdateService : IDisposable
     public UpdateService(string githubApiUrl)
     {
         _githubApiUrl = githubApiUrl;
-        _httpClient = new HttpClient();
+
+        // Create a new HttpClient instance that shares the static handler
+        // This allows per-instance headers while sharing the connection pool
+        _httpClient = new HttpClient(SharedHandler, false);
+
         // GitHub API requires a User-Agent header.
         _httpClient.DefaultRequestHeaders.UserAgent.Add(
             new ProductInfoHeaderValue("BatchConvertToRVZ", GetCurrentVersion().ToString()));

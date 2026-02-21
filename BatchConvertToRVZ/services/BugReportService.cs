@@ -12,7 +12,14 @@ namespace BatchConvertToRVZ.services;
 /// </summary>
 public class BugReportService : IDisposable
 {
-    private readonly HttpClient _httpClient = new();
+    // Shared static HttpClient instance to prevent socket exhaustion
+    // SocketsHttpHandler with PooledConnectionLifetime ensures proper connection pooling
+    private static readonly SocketsHttpHandler SharedHandler = new()
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+    };
+
+    private readonly HttpClient _httpClient;
     private readonly string _apiUrl;
     private readonly string _apiKey;
     private readonly string _applicationName;
@@ -24,6 +31,10 @@ public class BugReportService : IDisposable
         _apiKey = apiKey;
         _applicationName = applicationName;
         _applicationVersion = GetApplicationVersion();
+
+        // Create a new HttpClient instance that shares the static handler
+        // This allows per-instance headers while sharing the connection pool
+        _httpClient = new HttpClient(SharedHandler, false);
 
         // Set default headers once in the constructor for thread safety
         _httpClient.DefaultRequestHeaders.Add("X-API-KEY", _apiKey);

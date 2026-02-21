@@ -1338,40 +1338,41 @@ public partial class MainWindow : IDisposable
             return numberStr;
 
         // Count occurrences of comma and period
-        var commaCount = numberStr.Count(c => c == ',');
-        var periodCount = numberStr.Count(c => c == '.');
+        var commaCount = numberStr.Count(static c => c == ',');
+        var periodCount = numberStr.Count(static c => c == '.');
 
         // Determine which is the decimal separator based on position
         // The last occurrence of either comma or period is typically the decimal separator
         var lastCommaIndex = numberStr.LastIndexOf(',');
         var lastPeriodIndex = numberStr.LastIndexOf('.');
 
-        if (commaCount == 0 && periodCount == 0)
+        switch (commaCount)
         {
-            // No separators, return as-is
-            return numberStr;
-        }
-
-        if (commaCount > 0 && periodCount == 0)
-        {
-            // Only commas - determine if decimal or thousand separator
-            // If comma is followed by exactly 3 digits at the end, it's likely a thousand separator
-            // Otherwise, treat as decimal separator
-            if (lastCommaIndex >= 0 && lastCommaIndex < numberStr.Length - 1)
+            case 0 when periodCount == 0:
+                // No separators, return as-is
+                return numberStr;
+            case > 0 when periodCount == 0:
             {
-                var digitsAfterComma = numberStr[(lastCommaIndex + 1)..];
-                if (digitsAfterComma.Length == 3 && digitsAfterComma.All(char.IsDigit))
+                // Only commas - determine if decimal or thousand separator
+                // If comma is followed by exactly 3 digits at the end, it's likely a thousand separator
+                // Otherwise, treat as decimal separator
+                if (lastCommaIndex >= 0 && lastCommaIndex < numberStr.Length - 1)
                 {
-                    // Comma is a thousand separator, remove it
-                    return numberStr.Replace(",", "");
+                    var digitsAfterComma = numberStr[(lastCommaIndex + 1)..];
+                    if (digitsAfterComma.Length == 3 && digitsAfterComma.All(char.IsDigit))
+                    {
+                        // Comma is a thousand separator, remove it
+                        return numberStr.Replace(",", "");
+                    }
+                    else
+                    {
+                        // Comma is a decimal separator, replace with period
+                        return numberStr.Replace(',', '.');
+                    }
                 }
-                else
-                {
-                    // Comma is a decimal separator, replace with period
-                    return numberStr.Replace(',', '.');
-                }
+
+                return numberStr.Replace(',', '.');
             }
-            return numberStr.Replace(',', '.');
         }
 
         if (periodCount > 0 && commaCount == 0)
@@ -1387,6 +1388,7 @@ public partial class MainWindow : IDisposable
                 }
                 // Period is already a decimal separator, keep as-is
             }
+
             return numberStr;
         }
 
