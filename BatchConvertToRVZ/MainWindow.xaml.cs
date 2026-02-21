@@ -495,7 +495,7 @@ public partial class MainWindow : IDisposable
             LogMessage("Preparing for batch conversion...");
 
             var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(static file => AllSupportedInputExtensions.Contains(Path.GetExtension(file).ToLowerInvariant()))
+                .Where(static file => AllSupportedInputExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
                 .ToArray();
 
             // Add sorting by file size if the option is enabled
@@ -636,11 +636,11 @@ public partial class MainWindow : IDisposable
         var fileToProcess = inputFile;
         var isArchiveFile = false;
         var tempDir = string.Empty;
-        var fileExtension = Path.GetExtension(inputFile).ToLowerInvariant();
+        var fileExtension = Path.GetExtension(inputFile);
 
         try
         {
-            if (ArchiveExtensions.Contains(fileExtension))
+            if (ArchiveExtensions.Contains(fileExtension, StringComparer.OrdinalIgnoreCase))
             {
                 LogMessage($"Processing archive: {Path.GetFileName(inputFile)}");
                 var extractResult = await ExtractArchiveAsync(inputFile, cancellationToken);
@@ -1015,7 +1015,7 @@ public partial class MainWindow : IDisposable
                         {
                             var delay = 50 * (attempt + 1); // 50ms, 100ms, 150ms, ..., 500ms
                             LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
-                            await Task.Delay(delay, cancellationToken);
+                            await Task.Delay(delay, CancellationToken.None);
                             continue;
                         }
                     }
@@ -1039,7 +1039,7 @@ public partial class MainWindow : IDisposable
                     {
                         var delay = 100 * (attempt + 1); // 100ms, 200ms, 300ms, ..., 1000ms
                         LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
-                        await Task.Delay(delay, cancellationToken);
+                        await Task.Delay(delay, CancellationToken.None);
                     }
                     else
                     {
@@ -1064,7 +1064,7 @@ public partial class MainWindow : IDisposable
                     {
                         var delay = 150 * (attempt + 1);
                         LogMessage($"Access denied for {Path.GetFileName(filePath)}. Attempt {attempt + 1}/10. Waiting {delay}ms...");
-                        await Task.Delay(delay, cancellationToken);
+                        await Task.Delay(delay, CancellationToken.None);
                     }
                     else
                     {
@@ -1124,7 +1124,7 @@ public partial class MainWindow : IDisposable
     private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractArchiveAsync(string archivePath, CancellationToken cancellationToken)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-        var extension = Path.GetExtension(archivePath).ToLowerInvariant();
+        var extension = Path.GetExtension(archivePath);
         var archiveFileName = Path.GetFileName(archivePath);
 
         try
@@ -1178,8 +1178,8 @@ public partial class MainWindow : IDisposable
                                 if (entry.Key != null)
                                 {
                                     // Filter by extension before extracting to avoid wasting disk I/O on unwanted files
-                                    var entryExtension = Path.GetExtension(entry.Key).ToLowerInvariant();
-                                    if (!PrimaryTargetExtensionsInsideArchive.Contains(entryExtension))
+                                    var entryExtension = Path.GetExtension(entry.Key);
+                                    if (!PrimaryTargetExtensionsInsideArchive.Contains(entryExtension, StringComparer.OrdinalIgnoreCase))
                                     {
                                         continue;
                                     }
@@ -1227,7 +1227,7 @@ public partial class MainWindow : IDisposable
             // After successful extraction (or if it wasn't cancelled during),
             // look for the target file.
             var supportedFile = Directory.GetFiles(tempDir, "*.*", SearchOption.AllDirectories)
-                .FirstOrDefault(static f => PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(f).ToLowerInvariant()));
+                .FirstOrDefault(static f => PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase));
 
             if (supportedFile != null)
             {
@@ -1312,8 +1312,9 @@ public partial class MainWindow : IDisposable
             if (!match.Success) return false;
 
             var percentageStr = match.Groups[1].Value;
-            // FIX: Apply replacement before parsing to handle locale-specific decimal separators
-            percentageStr = percentageStr.Replace(',', '.');
+            // FIX: Remove thousand separators and normalize decimal separator for locale-independent parsing
+            // Handles formats like "1,000.5%", "1.000,5%", "1000.5%", "1000,5%"
+            percentageStr = RemoveThousandSeparators(percentageStr);
             if (!double.TryParse(percentageStr, NumberStyles.Any, CultureInfo.InvariantCulture, out _))
                 return false;
 
@@ -1324,6 +1325,84 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Error parsing DolphinTool progress line '{progressLine}': {ex.Message}");
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Removes thousand separators and normalizes decimal separator to period for invariant culture parsing.
+    /// Handles various locale formats like "1,000.5", "1.000,5", "1000.5", "1000,5".
+    /// </summary>
+    private static string RemoveThousandSeparators(string numberStr)
+    {
+        if (string.IsNullOrEmpty(numberStr))
+            return numberStr;
+
+        // Count occurrences of comma and period
+        var commaCount = numberStr.Count(c => c == ',');
+        var periodCount = numberStr.Count(c => c == '.');
+
+        // Determine which is the decimal separator based on position
+        // The last occurrence of either comma or period is typically the decimal separator
+        var lastCommaIndex = numberStr.LastIndexOf(',');
+        var lastPeriodIndex = numberStr.LastIndexOf('.');
+
+        if (commaCount == 0 && periodCount == 0)
+        {
+            // No separators, return as-is
+            return numberStr;
+        }
+
+        if (commaCount > 0 && periodCount == 0)
+        {
+            // Only commas - determine if decimal or thousand separator
+            // If comma is followed by exactly 3 digits at the end, it's likely a thousand separator
+            // Otherwise, treat as decimal separator
+            if (lastCommaIndex >= 0 && lastCommaIndex < numberStr.Length - 1)
+            {
+                var digitsAfterComma = numberStr[(lastCommaIndex + 1)..];
+                if (digitsAfterComma.Length == 3 && digitsAfterComma.All(char.IsDigit))
+                {
+                    // Comma is a thousand separator, remove it
+                    return numberStr.Replace(",", "");
+                }
+                else
+                {
+                    // Comma is a decimal separator, replace with period
+                    return numberStr.Replace(',', '.');
+                }
+            }
+            return numberStr.Replace(',', '.');
+        }
+
+        if (periodCount > 0 && commaCount == 0)
+        {
+            // Only periods - determine if decimal or thousand separator
+            if (lastPeriodIndex >= 0 && lastPeriodIndex < numberStr.Length - 1)
+            {
+                var digitsAfterPeriod = numberStr[(lastPeriodIndex + 1)..];
+                if (digitsAfterPeriod.Length == 3 && digitsAfterPeriod.All(char.IsDigit))
+                {
+                    // Period is a thousand separator, remove it
+                    return numberStr.Replace(".", "");
+                }
+                // Period is already a decimal separator, keep as-is
+            }
+            return numberStr;
+        }
+
+        // Both commas and periods present
+        // The rightmost one is the decimal separator
+        if (lastCommaIndex > lastPeriodIndex)
+        {
+            // Comma is the decimal separator
+            // Remove periods (thousand separators) and replace comma with period
+            return numberStr.Replace(".", "").Replace(',', '.');
+        }
+        else
+        {
+            // Period is the decimal separator
+            // Remove commas (thousand separators)
+            return numberStr.Replace(",", "");
         }
     }
 
@@ -1619,7 +1698,7 @@ public partial class MainWindow : IDisposable
             LogMessage("Preparing for batch verification...");
 
             var files = Directory.GetFiles(verifyFolder, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(static file => RvzExtension.Contains(Path.GetExtension(file).ToLowerInvariant()))
+                .Where(static file => RvzExtension.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
                 .ToArray();
 
             _totalFilesToProcess = files.Length;
@@ -1965,7 +2044,7 @@ public partial class MainWindow : IDisposable
         return verb.EndsWith('e') ? verb + "d" : verb + "ed";
     }
 
-    [GeneratedRegex(@"(\d+[\.,]?\d*)%")]
+    [GeneratedRegex(@"([\d.,]+)%")]
     private static partial Regex MyRegex();
 
     /// <summary>

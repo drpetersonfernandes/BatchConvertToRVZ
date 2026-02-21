@@ -39,20 +39,10 @@ public class BugReportService : IDisposable
         try
         {
             // Get system information
-            var systemInfo = GetSystemInfo();
+            var systemInfo = GetSystemInfo(message);
 
-            // Create the request payload with structured fields
-            var content = JsonContent.Create(new
-            {
-                message,
-                applicationName = _applicationName,
-                date = systemInfo.Date,
-                applicationVersion = systemInfo.ApplicationVersion,
-                osVersion = systemInfo.OsVersion,
-                architecture = systemInfo.Architecture,
-                bitness = systemInfo.Bitness,
-                windowsVersion = systemInfo.WindowsVersion
-            });
+            // Create the request payload using the SystemInfo model for type safety
+            var content = JsonContent.Create(systemInfo);
 
             // Send the request
             var response = await _httpClient.PostAsync(_apiUrl, content);
@@ -80,10 +70,13 @@ public class BugReportService : IDisposable
     /// <summary>
     /// Gets system information for the bug report
     /// </summary>
-    private SystemInfo GetSystemInfo()
+    /// <param name="message">The error message or bug report</param>
+    private SystemInfo GetSystemInfo(string message)
     {
         return new SystemInfo
         {
+            Message = message,
+            ApplicationName = _applicationName,
             Date = DateTime.Now.ToString("yyyy/M/d tt h:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
             ApplicationVersion = _applicationVersion,
             OsVersion = Environment.OSVersion.ToString(),
