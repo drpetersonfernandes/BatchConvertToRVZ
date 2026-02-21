@@ -1213,6 +1213,20 @@ public partial class MainWindow : IDisposable
             // Return a failure result with the detailed error message
             return (false, string.Empty, tempDir, errorMessage);
         }
+        catch (IOException ex) when ((ex.HResult & 0xFFFF) == 0x70 || // ERROR_DISK_FULL (0x80070070)
+                                     ex.Message.Contains("not enough space", StringComparison.OrdinalIgnoreCase) ||
+                                     ex.Message.Contains("disk full", StringComparison.OrdinalIgnoreCase))
+        {
+            // Handle disk full errors without sending a bug report - this is a user environment issue.
+            var errorMessage = $"Failed to extract archive {archiveFileName}. Not enough disk space available. Error: {ex.Message}";
+            LogMessage(errorMessage);
+
+            // Clean up the temporary directory on failure
+            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+
+            // Return a failure result with the detailed error message
+            return (false, string.Empty, tempDir, errorMessage);
+        }
         catch (Exception ex)
         {
             // Log any other exceptions that occurred during extraction

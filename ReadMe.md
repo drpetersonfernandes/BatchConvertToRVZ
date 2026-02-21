@@ -1,8 +1,9 @@
 # Batch Convert to RVZ
 
-[![GitHub release](https://img.shields.io/github/v/release/drpetersonfernandes/BatchConvertToRVZ)](https://github.com/drpetersonfernandes/BatchConvertToRVZ/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-blue)](https://github.com/drpetersonfernandes/BatchConvertToRVZ/releases)
+[![.NET 10.0](https://img.shields.io/badge/.NET-10.0-blue.svg)](https://dotnet.microsoft.com/download/dotnet/10.0)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE.txt)
+[![GitHub release](https://img.shields.io/github/v/release/drpetersonfernandes/BatchConvertToRVZ)](https://github.com/drpetersonfernandes/BatchConvertToRVZ/releases)
 
 A Windows desktop utility for batch converting GameCube and Wii disc images to RVZ format with verification capabilities.
 
