@@ -78,9 +78,10 @@ public partial class UpdateService : IDisposable
     /// <returns>A <see cref="Version"/> object or null if parsing fails.</returns>
     private static Version? ParseVersionFromTag(string tagName)
     {
-        // Remove any non-numeric/non-dot prefixes (like 'v' or 'release-').
-        var versionString = MyRegex().Replace(tagName, "");
-        return Version.TryParse(versionString, out var version) ? version : null;
+        // Extract only the numeric version components (e.g., "1.2.3" or "1.2.3.4")
+        // This handles prefixes like "v" or "release-" and suffixes like "-beta" or "-rc1"
+        var match = MyRegex().Match(tagName);
+        return match.Success && Version.TryParse(match.Value, out var version) ? version : null;
     }
 
     public void Dispose()
@@ -89,6 +90,6 @@ public partial class UpdateService : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    [GeneratedRegex("^[^0-9]+")]
+    [GeneratedRegex(@"\d+\.\d+\.\d+(\.\d+)?")]
     private static partial Regex MyRegex();
 }

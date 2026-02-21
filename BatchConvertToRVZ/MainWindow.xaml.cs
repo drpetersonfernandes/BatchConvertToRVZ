@@ -180,6 +180,8 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    private readonly SemaphoreSlim _closingSemaphore = new(1, 1);
+
     private async void Window_Closing(object sender, CancelEventArgs e)
     {
         try
@@ -187,6 +189,19 @@ public partial class MainWindow : IDisposable
             // Prevent re-entrancy if we're already in the process of closing
             if (_isClosing)
             {
+                return;
+            }
+
+            // Check if dispatcher is shutting down - if so, just allow the close
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            {
+                return;
+            }
+
+            // Use semaphore to prevent concurrent closing attempts
+            if (!await _closingSemaphore.WaitAsync(0))
+            {
+                e.Cancel = true;
                 return;
             }
 
@@ -199,34 +214,57 @@ public partial class MainWindow : IDisposable
                     e.Cancel = true; // keep window alive
                     _isClosing = true; // mark that we're in the closing process
 
-                    await _cts.CancelAsync(); // ask workers to stop
-                    await _runningTask; // wait for graceful stop
+                    try
+                    {
+                        await _cts.CancelAsync(); // ask workers to stop
+                        await _runningTask; // wait for graceful stop
+                    }
+                    catch (Exception ex)
+                    {
+                        _isClosing = false; // Reset flag on error so user can try closing again
+                        _ = ReportBugAsync("Error during task cancellation while closing", ex);
+                        return;
+                    }
 
                     // Close the window on the dispatcher to avoid re-entrancy
-                    await Dispatcher.BeginInvoke(() =>
+                    // Check dispatcher state again before invoking
+                    if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
                     {
                         try
                         {
-                            Close();
+                            await Dispatcher.BeginInvoke(() =>
+                            {
+                                if (!_disposed && !_isClosing)
+                                {
+                                    Close();
+                                }
+                            }, System.Windows.Threading.DispatcherPriority.Normal);
                         }
                         catch (Exception ex)
                         {
+                            _isClosing = false;
                             _ = ReportBugAsync("Error during window closing (dispatcher invoke)", ex);
                         }
-                    });
+                    }
                 }
             }
             catch (Exception ex)
             {
-                _isClosing = false; // Reset flag on error so user can try closing again
+                _isClosing = false;
                 _ = ReportBugAsync("Error during window closing", ex);
+            }
+            finally
+            {
+                _closingSemaphore.Release();
             }
         }
         catch (Exception ex)
         {
-            await ReportBugAsync("Error during window closing", ex);
+            _ = ReportBugAsync("Error during window closing", ex);
         }
     }
+
+    private const int MaxLogLines = 5000;
 
     private void LogMessage(string message)
     {
@@ -245,6 +283,28 @@ public partial class MainWindow : IDisposable
             }
 
             LogViewer.AppendText($"{timestampedMessage}{Environment.NewLine}");
+
+            // Trim log to prevent unbounded memory growth
+            var lineCount = LogViewer.LineCount;
+            if (lineCount > MaxLogLines)
+            {
+                var linesToRemove = lineCount - MaxLogLines;
+                var text = LogViewer.Text;
+                var lineIndex = 0;
+                for (var i = 0; i < linesToRemove; i++)
+                {
+                    lineIndex = text.IndexOf('\n', lineIndex);
+                    if (lineIndex < 0) break;
+
+                    lineIndex++;
+                }
+
+                if (lineIndex > 0)
+                {
+                    LogViewer.Text = text[lineIndex..];
+                }
+            }
+
             LogViewer.ScrollToEnd();
         });
     }
@@ -387,7 +447,7 @@ public partial class MainWindow : IDisposable
 
     private void SetControlsState(bool enabled)
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        Application.Current.Dispatcher.InvokeAsync(() =>
         {
             MainTabControl.IsEnabled = enabled;
 
@@ -1458,6 +1518,7 @@ public partial class MainWindow : IDisposable
         _cts.Cancel();
         _cts.Dispose();
         _updateService.Dispose();
+        _closingSemaphore.Dispose();
         _operationTimer.Stop();
         GC.SuppressFinalize(this);
     }
@@ -1891,9 +1952,14 @@ public partial class MainWindow : IDisposable
     private static string GetPastTense(string verb)
     {
         verb = verb.ToLowerInvariant();
-        if (verb.EndsWith('y'))
+        if (verb.EndsWith('y') && verb.Length > 1)
         {
-            return verb[..^1] + "ied";
+            // Check if the character before 'y' is a consonant (not a vowel)
+            var beforeY = verb[^2];
+            if (beforeY is not 'a' and not 'e' and not 'i' and not 'o' and not 'u')
+            {
+                return verb[..^1] + "ied";
+            }
         }
 
         return verb.EndsWith('e') ? verb + "d" : verb + "ed";
