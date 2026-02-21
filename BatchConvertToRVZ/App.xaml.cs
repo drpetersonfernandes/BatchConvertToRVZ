@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
@@ -18,6 +19,9 @@ public partial class App
 
     public App()
     {
+        // Clean up old DLL files from previous versions
+        CleanupOldDllFiles();
+
         // Initialize the bug report service
         BugReportServiceInstance = new BugReportService(BugReportApiUrl, BugReportApiKey, ApplicationName);
 
@@ -28,6 +32,28 @@ public partial class App
 
         // Register the Exit event handler
         Exit += App_Exit;
+    }
+
+    private static void CleanupOldDllFiles()
+    {
+        try
+        {
+            var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            var dllFilesToDelete = new[] { "7z_x64.dll", "7z_arm64.dll" };
+
+            foreach (var dllFile in dllFilesToDelete)
+            {
+                var filePath = Path.Combine(appDirectory, dllFile);
+                if (File.Exists(filePath))
+                {
+                    File.Delete(filePath);
+                }
+            }
+        }
+        catch
+        {
+            // Silently ignore any errors during cleanup
+        }
     }
 
     private void App_Exit(object sender, ExitEventArgs e)
