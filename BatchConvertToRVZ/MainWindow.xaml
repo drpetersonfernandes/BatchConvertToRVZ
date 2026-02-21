@@ -325,5 +325,32 @@
                     Visibility="Collapsed"
                     Click="CancelButton_Click" />
         </Grid>
+
+        <!-- Extraction Overlay - Shows "Please wait" during archive extraction -->
+        <Grid x:Name="ExtractionOverlay"
+              Grid.Row="0" Grid.RowSpan="6"
+              Background="#CC000000"
+              Visibility="Collapsed"
+              Panel.ZIndex="100">
+            <Border Background="White"
+                    CornerRadius="10"
+                    Padding="30"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+                <StackPanel>
+                    <TextBlock Text="Please wait"
+                               FontSize="24"
+                               FontWeight="Bold"
+                               HorizontalAlignment="Center"
+                               Margin="0,0,0,10" />
+                    <TextBlock x:Name="ExtractionOverlayText"
+                               Text="Extracting archive..."
+                               FontSize="14"
+                               HorizontalAlignment="Center"
+                               TextWrapping="Wrap"
+                               MaxWidth="400" />
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

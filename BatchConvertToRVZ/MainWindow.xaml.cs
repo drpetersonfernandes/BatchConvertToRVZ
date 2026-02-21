@@ -379,6 +379,10 @@ public partial class MainWindow : IDisposable
     {
         _cts.Cancel();
         LogMessage("Cancellation requested. Waiting for current operation(s) to complete...");
+
+        // Show the "Please wait" overlay to inform user that the app is waiting for SharpCompress to finish
+        ExtractionOverlayText.Text = "Cancellation requested.\nPlease wait for the current extraction to complete...";
+        ExtractionOverlay.Visibility = Visibility.Visible;
     }
 
     private void SetControlsState(bool enabled)
@@ -406,6 +410,9 @@ public partial class MainWindow : IDisposable
             if (enabled) // If controls are enabled (operation finished or not started)
             {
                 ClearProgressDisplay(); // Set to idle state
+
+                // Hide the "Please wait" overlay if it was shown during cancellation
+                ExtractionOverlay.Visibility = Visibility.Collapsed;
             }
 
             UpdateWriteSpeedDisplay(0);
@@ -1110,6 +1117,13 @@ public partial class MainWindow : IDisposable
 
                                 if (entry.Key != null)
                                 {
+                                    // Filter by extension before extracting to avoid wasting disk I/O on unwanted files
+                                    var entryExtension = Path.GetExtension(entry.Key).ToLowerInvariant();
+                                    if (!PrimaryTargetExtensionsInsideArchive.Contains(entryExtension))
+                                    {
+                                        continue;
+                                    }
+
                                     var entryPath = Path.Combine(tempDir, entry.Key);
                                     var entryFullPath = Path.GetFullPath(entryPath);
 
@@ -1226,10 +1240,10 @@ public partial class MainWindow : IDisposable
             var percentageStr = match.Groups[1].Value;
             // FIX: Apply replacement before parsing to handle locale-specific decimal separators
             percentageStr = percentageStr.Replace(',', '.');
-            if (!double.TryParse(percentageStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var percentage))
+            if (!double.TryParse(percentageStr, NumberStyles.Any, CultureInfo.InvariantCulture, out _))
                 return false;
 
-            LogMessage($"DolphinTool Converting: {percentage:F1}%");
+            // Progress is shown in the progress bar; logging every update causes UI lag
             return true;
         }
         catch (Exception ex)
@@ -1776,7 +1790,7 @@ public partial class MainWindow : IDisposable
         var elapsed = _operationTimer.Elapsed;
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
-            ProcessingTimeValue.Text = $@"{elapsed:hh\:mm\:ss}";
+            ProcessingTimeValue.Text = $"{(int)elapsed.TotalHours:D2}:{elapsed:mm\\:ss}";
         });
     }
 
@@ -1835,9 +1849,9 @@ public partial class MainWindow : IDisposable
 
     private void UpdateProgressDisplay(int current, int total, string currentFileName, string operationVerb)
     {
-        var percentage = total == 0 ? 0 : (double)current / total * 100;
-        Application.Current.Dispatcher.BeginInvoke(() =>
+        Application.Current.Dispatcher.Invoke(() =>
         {
+            var percentage = total == 0 ? 0 : (double)current / total * 100;
             ProgressText.Text = $"{operationVerb} file {current} of {total}: {currentFileName} ({percentage:F1}%)";
             ProgressBar.Value = current;
             ProgressBar.Maximum = Math.Max(total, 1);
