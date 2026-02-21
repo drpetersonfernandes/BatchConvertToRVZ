@@ -96,11 +96,6 @@
                                     <ComboBox x:Name="DegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" ToolTip="Higher values = faster overall conversion but more system resources used">
                                         <ComboBoxItem Content="2" />
                                         <ComboBoxItem Content="3" />
-                                        <ComboBoxItem Content="4" />
-                                        <ComboBoxItem Content="5" />
-                                        <ComboBoxItem Content="6" />
-                                        <ComboBoxItem Content="7" />
-                                        <ComboBoxItem Content="8" />
                                     </ComboBox>
                                 </StackPanel>
 
@@ -210,8 +205,6 @@
                                 <ComboBox x:Name="VerifyDegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" ToolTip="Higher values = faster overall verification but more system resources used">
                                     <ComboBoxItem Content="2" />
                                     <ComboBoxItem Content="3" />
-                                    <ComboBoxItem Content="4" />
-                                    <ComboBoxItem Content="5" />
                                 </ComboBox>
                             </StackPanel>
 
