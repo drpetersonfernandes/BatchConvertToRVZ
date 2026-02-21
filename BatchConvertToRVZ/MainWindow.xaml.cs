@@ -24,7 +24,7 @@ public partial class MainWindow : IDisposable
     private string? _dolphinToolPath;
     private bool _processSmallerFilesFirst;
     private CancellationTokenSource _cts;
-    private readonly UpdateService _updateService;
+    private readonly services.UpdateService _updateService;
 
     private const string GitHubApiUrl = "https://api.github.com/repos/drpetersonfernandes/BatchConvertToRVZ/releases/latest";
 
@@ -84,7 +84,7 @@ public partial class MainWindow : IDisposable
         _cts = new CancellationTokenSource();
 
         // The BugReportService is now initialized and managed by the App class.
-        _updateService = new UpdateService(GitHubApiUrl);
+        _updateService = new services.UpdateService(GitHubApiUrl);
 
         LogMessage("Welcome to the Batch Convert to RVZ.");
         LogMessage("");

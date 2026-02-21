@@ -5,12 +5,12 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using BatchConvertToRVZ.models;
 
-namespace BatchConvertToRVZ;
+namespace BatchConvertToRVZ.services;
 
 /// <summary>
 /// Service for checking for application updates on GitHub.
 /// </summary>
-public sealed partial class UpdateService : IDisposable
+public partial class UpdateService : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly string _githubApiUrl;
@@ -86,6 +86,7 @@ public sealed partial class UpdateService : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     [GeneratedRegex("^[^0-9]+")]
