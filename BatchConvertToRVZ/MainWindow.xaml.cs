@@ -77,6 +77,9 @@ public partial class MainWindow : IDisposable
     private bool _moveFailedFiles;
     private bool _moveSuccessFiles;
 
+    // Field to track if an extraction is currently in progress
+    private bool _isExtracting;
+
 
     public MainWindow()
     {
@@ -440,9 +443,12 @@ public partial class MainWindow : IDisposable
         _cts.Cancel();
         LogMessage("Cancellation requested. Waiting for current operation(s) to complete...");
 
-        // Show the "Please wait" overlay to inform user that the app is waiting for SharpCompress to finish
-        ExtractionOverlayText.Text = "Cancellation requested.\nPlease wait for the current extraction to complete...";
-        ExtractionOverlay.Visibility = Visibility.Visible;
+        // Only show the extraction overlay if an extraction is currently in progress
+        if (_isExtracting)
+        {
+            ExtractionOverlayText.Text = "Cancellation requested.\nPlease wait for the current extraction to complete...";
+            ExtractionOverlay.Visibility = Visibility.Visible;
+        }
     }
 
     private void SetControlsState(bool enabled)
@@ -1127,6 +1133,9 @@ public partial class MainWindow : IDisposable
         var extension = Path.GetExtension(archivePath);
         var archiveFileName = Path.GetFileName(archivePath);
 
+        // Set the extraction flag to true at the start
+        _isExtracting = true;
+
         try
         {
             Directory.CreateDirectory(tempDir);
@@ -1300,6 +1309,11 @@ public partial class MainWindow : IDisposable
 
             // Return a failure result with the error message
             return (false, string.Empty, tempDir, $"Exception during extraction: {ex.Message}");
+        }
+        finally
+        {
+            // Reset the extraction flag when extraction completes (successfully or with error)
+            _isExtracting = false;
         }
     }
 
