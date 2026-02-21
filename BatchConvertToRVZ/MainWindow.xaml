@@ -7,16 +7,16 @@
         WindowStartupLocation="CenterScreen">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/> <!-- Menu -->
-            <RowDefinition Height="Auto"/> <!-- TabControl -->
-            <RowDefinition Height="*"/>    <!-- LogViewer -->
-            <RowDefinition Height="Auto"/> <!-- Stats Panel -->
-            <RowDefinition Height="Auto"/> <!-- ProgressText -->
-            <RowDefinition Height="Auto"/> <!-- ProgressBar Grid -->
+            <RowDefinition Height="Auto" /> <!-- Menu -->
+            <RowDefinition Height="Auto" /> <!-- TabControl -->
+            <RowDefinition Height="*" />    <!-- LogViewer -->
+            <RowDefinition Height="Auto" /> <!-- Stats Panel -->
+            <RowDefinition Height="Auto" /> <!-- ProgressText -->
+            <RowDefinition Height="Auto" /> <!-- ProgressBar Grid -->
         </Grid.RowDefinitions>
 
         <!-- Menu Bar -->
-        <Menu Grid.Row="0" >
+        <Menu Grid.Row="0">
             <MenuItem Header="File">
                 <MenuItem Header="Exit" Click="ExitMenuItem_Click">
                     <MenuItem.Icon>
@@ -44,68 +44,140 @@
                     <!-- Input Folder Selection -->
                     <Grid Margin="5,5,5,5">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="100"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Label Grid.Column="0" Content="Input Folder:" VerticalAlignment="Center"/>
-                        <TextBox x:Name="InputFolderTextBox" Grid.Column="1" Margin="5,0,5,0" Padding="5" IsReadOnly="True"/>
-                        <Button x:Name="BrowseInputButton" Grid.Column="2" Content="Browse" Click="BrowseInputButton_Click" Padding="10,5"/>
+                        <Label Grid.Column="0" Content="Input Folder:" VerticalAlignment="Center" ToolTip="Select the folder containing ISO/GCM/WBFS/RVZ files to convert" />
+                        <TextBox x:Name="InputFolderTextBox" Grid.Column="1" Margin="5,0,5,0" Padding="5" IsReadOnly="True" ToolTip="The folder containing game files to be converted" />
+                        <Button x:Name="BrowseInputButton" Grid.Column="2" Content="Browse" Click="BrowseInputButton_Click" Padding="10,5" ToolTip="Browse for the input folder containing game files" />
                     </Grid>
 
                     <!-- Output Folder Selection -->
                     <Grid Margin="5,5,5,5">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="100"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Label Grid.Column="0" Content="Output Folder:" VerticalAlignment="Center"/>
-                        <TextBox x:Name="OutputFolderTextBox" Grid.Column="1" Margin="5,0,5,0" Padding="5" IsReadOnly="True"/>
-                        <Button x:Name="BrowseOutputButton" Grid.Column="2" Content="Browse" Click="BrowseOutputButton_Click" Padding="10,5"/>
+                        <Label Grid.Column="0" Content="Output Folder:" VerticalAlignment="Center" ToolTip="Select where the converted RVZ files will be saved" />
+                        <TextBox x:Name="OutputFolderTextBox" Grid.Column="1" Margin="5,0,5,0" Padding="5" IsReadOnly="True" ToolTip="The destination folder for converted RVZ files. If not set, files will be saved in the input folder" />
+                        <Button x:Name="BrowseOutputButton" Grid.Column="2" Content="Browse" Click="BrowseOutputButton_Click" Padding="10,5" ToolTip="Browse for the output folder where converted files will be saved" />
                     </Grid>
 
-                    <!-- Delete Files Checkbox -->
-                    <CheckBox x:Name="DeleteFilesCheckBox"
-                              Content="Delete original files after conversion"
-                              Margin="10,5,10,5"
-                              HorizontalAlignment="Left"/>
+                    <!-- Options Grid: Checkboxes and Compression Settings -->
+                    <Grid Margin="10,5,10,5">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
 
-                    <!-- Parallel Processing Options -->
-                    <CheckBox x:Name="ParallelProcessingCheckBox"
-                              Content="Enable parallel processing (multiple files at once)"
-                              Margin="10,5,10,0"
-                              HorizontalAlignment="Left"
-                              IsChecked="False"/>
+                        <!-- Left Column: General Settings -->
+                        <GroupBox Grid.Column="0" Header="General Settings" Margin="0,0,5,0" Padding="5">
+                            <StackPanel>
+                                <!-- Delete Files Checkbox -->
+                                <CheckBox x:Name="DeleteFilesCheckBox"
+                                          Content="Delete original files after conversion"
+                                          Margin="0,0,0,5"
+                                          HorizontalAlignment="Left"
+                                          ToolTip="WARNING: Permanently deletes source files after successful conversion. Use with caution!" />
 
-                    <StackPanel Orientation="Horizontal" Margin="30,5,10,5"
-                                IsEnabled="{Binding ElementName=ParallelProcessingCheckBox, Path=IsChecked}">
-                        <Label Content="Max concurrent files:" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="DegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1">
-                            <ComboBoxItem Content="2"/>
-                            <ComboBoxItem Content="3"/>
-                            <ComboBoxItem Content="4"/>
-                            <ComboBoxItem Content="5"/>
-                            <ComboBoxItem Content="6"/>
-                            <ComboBoxItem Content="7"/>
-                            <ComboBoxItem Content="8"/>
-                        </ComboBox>
-                    </StackPanel>
-                    
-                    <CheckBox x:Name="ProcessSmallerFilesFirstCheckBox"
-                              Content="Process smaller files first"
-                              Margin="10,5,10,5"
-                              HorizontalAlignment="Left"
-                              IsChecked="False"/>
+                                <!-- Parallel Processing Options -->
+                                <CheckBox x:Name="ParallelProcessingCheckBox"
+                                          Content="Enable parallel processing (multiple files at once)"
+                                          Margin="0,0,0,0"
+                                          HorizontalAlignment="Left"
+                                          IsChecked="False"
+                                          ToolTip="Process multiple files simultaneously to speed up conversion. Requires more CPU and RAM resources" />
+
+                                <StackPanel Orientation="Horizontal" Margin="20,5,0,5"
+                                            IsEnabled="{Binding ElementName=ParallelProcessingCheckBox, Path=IsChecked}">
+                                    <Label Content="Max concurrent files:" VerticalAlignment="Center" ToolTip="Maximum number of files to convert simultaneously" />
+                                    <ComboBox x:Name="DegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" ToolTip="Higher values = faster overall conversion but more system resources used">
+                                        <ComboBoxItem Content="2" />
+                                        <ComboBoxItem Content="3" />
+                                        <ComboBoxItem Content="4" />
+                                        <ComboBoxItem Content="5" />
+                                        <ComboBoxItem Content="6" />
+                                        <ComboBoxItem Content="7" />
+                                        <ComboBoxItem Content="8" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <CheckBox x:Name="ProcessSmallerFilesFirstCheckBox"
+                                          Content="Process smaller files first"
+                                          Margin="0,0,0,0"
+                                          HorizontalAlignment="Left"
+                                          IsChecked="False"
+                                          ToolTip="Process smaller files before larger ones. Helps see progress quickly and can optimize overall conversion time" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Right Column: Compression Settings Group -->
+                        <GroupBox Grid.Column="1" Header="Compression Settings" Margin="5,0,0,0" Padding="5">
+                            <StackPanel>
+                                <!-- Compression Method -->
+                                <Grid Margin="0,0,0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Label Grid.Column="0" Content="Method:" VerticalAlignment="Center" ToolTip="Compression algorithm to use" />
+                                    <ComboBox x:Name="CompressionMethodComboBox" Grid.Column="1" VerticalAlignment="Center" SelectedIndex="0" SelectionChanged="CompressionMethodComboBox_SelectionChanged"
+                                              ToolTip="zstd = Best balance of speed/compression (recommended). zlib = Compatible. lzma/lzma2 = Best compression but slower. bzip2/lz4 = Alternative options">
+                                        <ComboBoxItem Content="zstd (Zstandard)" Tag="zstd" />
+                                        <ComboBoxItem Content="zlib" Tag="zlib" />
+                                        <ComboBoxItem Content="lzma" Tag="lzma" />
+                                        <ComboBoxItem Content="lzma2" Tag="lzma2" />
+                                        <ComboBoxItem Content="bzip2" Tag="bzip2" />
+                                        <ComboBoxItem Content="lz4" Tag="lz4" />
+                                    </ComboBox>
+                                </Grid>
+
+                                <!-- Compression Level -->
+                                <Grid Margin="0,0,0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="50" />
+                                    </Grid.ColumnDefinitions>
+                                    <Label Grid.Column="0" Content="Level:" VerticalAlignment="Center" ToolTip="Compression level (1-22)" />
+                                    <Slider x:Name="CompressionLevelSlider" Grid.Column="1" VerticalAlignment="Center" Minimum="1" Maximum="22" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="CompressionLevelSlider_ValueChanged"
+                                            ToolTip="Lower = Faster conversion, larger files. Higher = Slower conversion, smaller files. Default (5) is recommended for most cases" />
+                                    <TextBlock x:Name="CompressionLevelValue" Grid.Column="2" Text="5" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="Bold" ToolTip="Current compression level value" />
+                                </Grid>
+
+                                <!-- Block Size -->
+                                <Grid Margin="0,0,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Label Grid.Column="0" Content="Block Size:" VerticalAlignment="Center" ToolTip="Size of compression blocks" />
+                                    <ComboBox x:Name="BlockSizeComboBox" Grid.Column="1" VerticalAlignment="Center" SelectedIndex="2"
+                                              ToolTip="Larger blocks = Better compression but slower seeking. 128KB (default) is recommended for most cases. Use larger sizes for better compression on large games">
+                                        <ComboBoxItem Content="32 KB" Tag="32768" />
+                                        <ComboBoxItem Content="64 KB" Tag="65536" />
+                                        <ComboBoxItem Content="128 KB" Tag="131072" />
+                                        <ComboBoxItem Content="256 KB" Tag="262144" />
+                                        <ComboBoxItem Content="512 KB" Tag="524288" />
+                                        <ComboBoxItem Content="1 MB" Tag="1048576" />
+                                        <ComboBoxItem Content="2 MB" Tag="2097152" />
+                                    </ComboBox>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+                    </Grid>
 
                     <!-- Start Conversion Button -->
                     <Button x:Name="StartConversionButton"
                             Content="Start Conversion"
                             Click="StartConversionButton_Click"
-                            Margin="10,10,10,15"
+                            Margin="10,10,10,5"
                             Padding="15,8"
                             HorizontalAlignment="Center"
-                            FontWeight="Bold"/>
+                            FontWeight="Bold"
+                            ToolTip="Begin converting all supported files in the input folder to RVZ format" />
                 </StackPanel>
             </TabItem>
             <TabItem Header="Verify Integrity">
@@ -113,52 +185,61 @@
                     <!-- Verify Folder Selection -->
                     <Grid Margin="5,5,5,5">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="100"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Label Grid.Column="0" Content="Verify Folder:" VerticalAlignment="Center"/>
-                        <TextBox x:Name="VerifyFolderTextBox" Grid.Column="1" Margin="5,0,5,0" Padding="5" IsReadOnly="True"/>
-                        <Button x:Name="BrowseVerifyFolderButton" Grid.Column="2" Content="Browse" Click="BrowseVerifyFolderButton_Click" Padding="10,5"/>
+                        <Label Grid.Column="0" Content="Verify Folder:" VerticalAlignment="Center" ToolTip="Select the folder containing RVZ files to verify" />
+                        <TextBox x:Name="VerifyFolderTextBox" Grid.Column="1" Margin="5,0,5,0" Padding="5" IsReadOnly="True" ToolTip="The folder containing RVZ files to be verified for integrity" />
+                        <Button x:Name="BrowseVerifyFolderButton" Grid.Column="2" Content="Browse" Click="BrowseVerifyFolderButton_Click" Padding="10,5" ToolTip="Browse for the folder containing RVZ files to verify" />
                     </Grid>
 
-                    <!-- Parallel Processing Options for Verification -->
-                    <CheckBox x:Name="VerifyParallelProcessingCheckBox"
-                              Content="Enable parallel processing (multiple files at once)"
-                              Margin="10,5,10,0"
-                              HorizontalAlignment="Left"
-                              IsChecked="False"/>
-                    <StackPanel Orientation="Horizontal" Margin="30,5,10,5"
-                                IsEnabled="{Binding ElementName=VerifyParallelProcessingCheckBox, Path=IsChecked}">
-                        <Label Content="Max concurrent files:" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="VerifyDegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1">
-                            <ComboBoxItem Content="2"/>
-                            <ComboBoxItem Content="3"/>
-                            <ComboBoxItem Content="4"/>
-                            <ComboBoxItem Content="5"/>
-                        </ComboBox>
-                    </StackPanel>
+                    <!-- General Settings GroupBox -->
+                    <GroupBox Header="General Settings" Margin="5,5,5,5" Padding="5">
+                        <StackPanel>
+                            <!-- Parallel Processing Options for Verification -->
+                            <CheckBox x:Name="VerifyParallelProcessingCheckBox"
+                                      Content="Enable parallel processing (multiple files at once)"
+                                      Margin="0,0,0,0"
+                                      HorizontalAlignment="Left"
+                                      IsChecked="False"
+                                      ToolTip="Verify multiple files simultaneously to speed up the process. Requires more CPU resources" />
+                            <StackPanel Orientation="Horizontal" Margin="20,5,0,5"
+                                        IsEnabled="{Binding ElementName=VerifyParallelProcessingCheckBox, Path=IsChecked}">
+                                <Label Content="Max concurrent files:" VerticalAlignment="Center" ToolTip="Maximum number of files to verify simultaneously" />
+                                <ComboBox x:Name="VerifyDegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" ToolTip="Higher values = faster overall verification but more system resources used">
+                                    <ComboBoxItem Content="2" />
+                                    <ComboBoxItem Content="3" />
+                                    <ComboBoxItem Content="4" />
+                                    <ComboBoxItem Content="5" />
+                                </ComboBox>
+                            </StackPanel>
 
-                    <!-- NEW: Checkboxes for moving files -->
-                    <CheckBox x:Name="MoveFailedCheckBox"
-                              Content="Move failed RVZ files to '_Failed' subfolder"
-                              Margin="10,5,10,5"
-                              HorizontalAlignment="Left"
-                              IsChecked="False"/>
-                    <CheckBox x:Name="MoveSuccessCheckBox"
-                              Content="Move successful RVZ files to '_Success' subfolder"
-                              Margin="10,5,10,5"
-                              HorizontalAlignment="Left"
-                              IsChecked="False"/>
+                            <!-- Checkboxes for moving files -->
+                            <CheckBox x:Name="MoveFailedCheckBox"
+                                      Content="Move failed RVZ files to '_Failed' subfolder"
+                                      Margin="0,5,0,5"
+                                      HorizontalAlignment="Left"
+                                      IsChecked="False"
+                                      ToolTip="Automatically move corrupted or failed RVZ files to a '_Failed' subfolder for easy identification" />
+                            <CheckBox x:Name="MoveSuccessCheckBox"
+                                      Content="Move successful RVZ files to '_Success' subfolder"
+                                      Margin="0,0,0,0"
+                                      HorizontalAlignment="Left"
+                                      IsChecked="False"
+                                      ToolTip="Automatically move successfully verified RVZ files to a '_Success' subfolder for organization" />
+                        </StackPanel>
+                    </GroupBox>
 
                     <!-- Start Verification Button -->
                     <Button x:Name="StartVerifyButton"
                             Content="Start Verification"
                             Click="StartVerifyButton_Click"
-                            Margin="10,10,10,15"
+                            Margin="10,10,10,5"
                             Padding="15,8"
                             HorizontalAlignment="Center"
-                            FontWeight="Bold"/>
+                            FontWeight="Bold"
+                            ToolTip="Begin verifying the integrity of all RVZ files in the selected folder" />
                 </StackPanel>
             </TabItem>
         </TabControl>
@@ -170,7 +251,7 @@
                  VerticalScrollBarVisibility="Visible"
                  IsReadOnly="True"
                  Margin="10,0,10,10"
-                 FontFamily="Consolas"/>
+                 FontFamily="Consolas" />
 
         <!-- Stats Panel -->
         <Grid Grid.Row="3" Margin="10,0,10,5">
@@ -184,57 +265,57 @@
 
             <Border Grid.Column="0" BorderBrush="LightGray" BorderThickness="1" Margin="2" Padding="5">
                 <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                    <TextBlock Text="Total Files:" FontWeight="Bold" HorizontalAlignment="Center"/>
-                    <TextBlock x:Name="TotalFilesValue" Text="0" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Total Files:" FontWeight="Bold" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="TotalFilesValue" Text="0" HorizontalAlignment="Center" />
                 </StackPanel>
             </Border>
 
             <Border Grid.Column="1" BorderBrush="LightGray" BorderThickness="1" Margin="2" Padding="5">
                 <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                    <TextBlock Text="Success:" FontWeight="Bold" Foreground="Green" HorizontalAlignment="Center"/>
-                    <TextBlock x:Name="SuccessValue" Text="0" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Success:" FontWeight="Bold" Foreground="Green" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="SuccessValue" Text="0" HorizontalAlignment="Center" />
                 </StackPanel>
             </Border>
 
             <Border Grid.Column="2" BorderBrush="LightGray" BorderThickness="1" Margin="2" Padding="5">
                 <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                    <TextBlock Text="Failed:" FontWeight="Bold" Foreground="Red" HorizontalAlignment="Center"/>
-                    <TextBlock x:Name="FailedValue" Text="0" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Failed:" FontWeight="Bold" Foreground="Red" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="FailedValue" Text="0" HorizontalAlignment="Center" />
                 </StackPanel>
             </Border>
 
             <Border Grid.Column="3" BorderBrush="LightGray" BorderThickness="1" Margin="2" Padding="5">
                 <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                    <TextBlock Text="Processing Time:" FontWeight="Bold" HorizontalAlignment="Center"/>
-                    <TextBlock x:Name="ProcessingTimeValue" Text="00:00:00" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Processing Time:" FontWeight="Bold" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="ProcessingTimeValue" Text="00:00:00" HorizontalAlignment="Center" />
                 </StackPanel>
             </Border>
-            
+
             <Border Grid.Column="4" BorderBrush="LightGray" BorderThickness="1" Margin="2" Padding="5">
                 <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                    <TextBlock Text="Write Speed:" FontWeight="Bold" HorizontalAlignment="Center"/>
-                    <TextBlock x:Name="WriteSpeedValue" Text="0.0 MB/s" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Write Speed:" FontWeight="Bold" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="WriteSpeedValue" Text="0.0 MB/s" HorizontalAlignment="Center" />
                 </StackPanel>
             </Border>
         </Grid>
 
         <!-- Progress Text -->
         <TextBlock x:Name="ProgressText"
-                  Grid.Row="4"
-                  Margin="10,5,10,2"
-                  HorizontalAlignment="Center"
-                  Visibility="Visible"/>
+                   Grid.Row="4"
+                   Margin="10,5,10,2"
+                   HorizontalAlignment="Center"
+                   Visibility="Visible" />
 
         <!-- Progress Bar -->
         <Grid Grid.Row="5" Margin="10,2,10,10">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <ProgressBar x:Name="ProgressBar"
                          Height="25"
                          Grid.Column="0"
-                         Visibility="Visible"/>
+                         Visibility="Visible" />
             <Button x:Name="CancelButton"
                     Content="Cancel"
                     Width="100"
@@ -242,7 +323,7 @@
                     Grid.Column="1"
                     Margin="10,0,0,0"
                     Visibility="Collapsed"
-                    Click="CancelButton_Click"/>
+                    Click="CancelButton_Click" />
         </Grid>
     </Grid>
 </Window>

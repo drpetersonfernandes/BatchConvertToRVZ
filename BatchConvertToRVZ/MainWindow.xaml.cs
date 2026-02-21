@@ -30,9 +30,21 @@ public partial class MainWindow : IDisposable
 
     private int _currentDegreeOfParallelismForFiles = 1;
 
-    private const string RvzCompressionMethod = "zstd"; // Default compression method
-    private const int RvzCompressionLevel = 5; // Default compression level
-    private const int RvzBlockSize = 131072; // Default block size
+    // Compression settings (now instance variables to allow user configuration)
+    private string _rvzCompressionMethod = "zstd"; // Default compression method
+    private int _rvzCompressionLevel = 5; // Default compression level
+    private int _rvzBlockSize = 131072; // Default block size (128KB)
+
+    // Compression level ranges for different methods
+    private static readonly Dictionary<string, (int Min, int Max)> CompressionLevelRanges = new()
+    {
+        { "zstd", (1, 22) },
+        { "zlib", (1, 9) },
+        { "lzma", (1, 9) },
+        { "lzma2", (1, 9) },
+        { "bzip2", (1, 9) },
+        { "lz4", (1, 12) }
+    };
 
     // Supported input extensions (Updated to include archives)
     private static readonly string[] AllSupportedInputExtensions = [".iso", ".zip", ".7z", ".rar"];
@@ -272,6 +284,9 @@ public partial class MainWindow : IDisposable
             var useParallelFileProcessing = ParallelProcessingCheckBox.IsChecked == true;
             _processSmallerFilesFirst = ProcessSmallerFilesFirstCheckBox.IsChecked ?? true;
 
+            // Update compression settings from UI
+            UpdateBlockSizeFromSelection();
+
             _currentDegreeOfParallelismForFiles = 1;
             if (useParallelFileProcessing && DegreeOfParallelismComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem selectedItem)
             {
@@ -320,7 +335,7 @@ public partial class MainWindow : IDisposable
             LogMessage($"Output folder: {outputFolder}");
             LogMessage($"Delete original files: {deleteFiles}");
             LogMessage($"Parallel file processing: {useParallelFileProcessing} (Max concurrency: {_currentDegreeOfParallelismForFiles})");
-            LogMessage($"RVZ Compression: Method={RvzCompressionMethod}, Level={RvzCompressionLevel}, Block Size={RvzBlockSize}");
+            LogMessage($"RVZ Compression: Method={_rvzCompressionMethod}, Level={_rvzCompressionLevel}, Block Size={_rvzBlockSize}");
             LogMessage($"Process smaller files first: {_processSmallerFilesFirst}");
 
             // Wrap the whole job in a task that we can await on exit
@@ -689,7 +704,7 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Converting '{Path.GetFileName(inputFile)}' to '{Path.GetFileName(outputFile)}'...");
 
-            var arguments = $"convert -i \"{inputFile}\" -o \"{outputFile}\" -f rvz -c {RvzCompressionMethod} -l {RvzCompressionLevel} -b {RvzBlockSize}";
+            var arguments = $"convert -i \"{inputFile}\" -o \"{outputFile}\" -f rvz -c {_rvzCompressionMethod} -l {_rvzCompressionLevel} -b {_rvzBlockSize}";
 
             process.StartInfo = new ProcessStartInfo
             {
@@ -1073,7 +1088,7 @@ public partial class MainWindow : IDisposable
                         IArchive? archive = null;
                         try
                         {
-                            archive = extension.ToLowerInvariant() switch
+                            archive = extension switch
                             {
                                 ".zip" => ZipArchive.OpenArchive(archivePath),
                                 ".7z" => SevenZipArchive.OpenArchive(archivePath),
@@ -1858,4 +1873,63 @@ public partial class MainWindow : IDisposable
 
     [GeneratedRegex(@"(\d+[\.,]?\d*)%")]
     private static partial Regex MyRegex();
+
+    /// <summary>
+    /// Handles compression method selection change.
+    /// Updates the compression level slider range based on the selected method.
+    /// </summary>
+    private void CompressionMethodComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (CompressionMethodComboBox?.SelectedItem is not System.Windows.Controls.ComboBoxItem selectedItem) return;
+        if (CompressionLevelSlider == null) return;
+
+        var method = selectedItem.Tag?.ToString() ?? "zstd";
+        _rvzCompressionMethod = method;
+
+        // Update compression level range based on selected method
+        if (CompressionLevelRanges.TryGetValue(method, out var range))
+        {
+            CompressionLevelSlider.Minimum = range.Min;
+            CompressionLevelSlider.Maximum = range.Max;
+
+            // Adjust current value if it's outside the new range
+            if (CompressionLevelSlider.Value < range.Min)
+            {
+                CompressionLevelSlider.Value = range.Min;
+            }
+            else if (CompressionLevelSlider.Value > range.Max)
+            {
+                CompressionLevelSlider.Value = range.Max;
+            }
+        }
+
+        LogMessage($"Compression method changed to: {method} (level range: {CompressionLevelSlider.Minimum}-{CompressionLevelSlider.Maximum})");
+    }
+
+    /// <summary>
+    /// Handles compression level slider value change.
+    /// Updates the displayed value and stores the setting.
+    /// </summary>
+    private void CompressionLevelSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (CompressionLevelValue == null) return;
+
+        var level = (int)e.NewValue;
+        _rvzCompressionLevel = level;
+        CompressionLevelValue.Text = level.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Gets the currently selected block size from the UI.
+    /// Called when starting conversion to get the latest value.
+    /// </summary>
+    private void UpdateBlockSizeFromSelection()
+    {
+        if (BlockSizeComboBox?.SelectedItem is not System.Windows.Controls.ComboBoxItem selectedItem) return;
+
+        if (selectedItem.Tag != null && int.TryParse(selectedItem.Tag.ToString(), out var blockSize))
+        {
+            _rvzBlockSize = blockSize;
+        }
+    }
 }
