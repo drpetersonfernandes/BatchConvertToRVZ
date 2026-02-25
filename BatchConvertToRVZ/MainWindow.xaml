@@ -98,13 +98,6 @@
                                         <ComboBoxItem Content="3" />
                                     </ComboBox>
                                 </StackPanel>
-
-                                <CheckBox x:Name="ProcessSmallerFilesFirstCheckBox"
-                                          Content="Process smaller files first"
-                                          Margin="0,0,0,0"
-                                          HorizontalAlignment="Left"
-                                          IsChecked="False"
-                                          ToolTip="Process smaller files before larger ones. Helps see progress quickly and can optimize overall conversion time" />
                             </StackPanel>
                         </GroupBox>
 

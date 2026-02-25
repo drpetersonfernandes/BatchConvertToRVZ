@@ -9,9 +9,8 @@ using System.Windows;
 using Microsoft.Win32;
 using System.Text.RegularExpressions;
 using SharpCompress.Archives;
-using SharpCompress.Archives.Zip;
-using SharpCompress.Archives.SevenZip;
-using SharpCompress.Archives.Rar;
+using SharpCompress.Readers;
+using SharpCompress.Common;
 
 namespace BatchConvertToRVZ;
 
@@ -22,7 +21,6 @@ public partial class MainWindow : IDisposable
     private Task? _runningTask;
     private bool _dependenciesOk;
     private string? _dolphinToolPath;
-    private bool _processSmallerFilesFirst;
     private CancellationTokenSource _cts;
     private readonly services.UpdateService _updateService;
 
@@ -202,14 +200,16 @@ public partial class MainWindow : IDisposable
             }
 
             // Use semaphore to prevent concurrent closing attempts
-            if (!await _closingSemaphore.WaitAsync(0))
-            {
-                e.Cancel = true;
-                return;
-            }
-
+            var semaphoreAcquired = false;
             try
             {
+                if (!await _closingSemaphore.WaitAsync(0))
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                semaphoreAcquired = true;
                 // If a job is in flight, cancel it and keep the window open
                 // until the task completes.
                 if (_runningTask is { IsCompleted: false })
@@ -237,7 +237,7 @@ public partial class MainWindow : IDisposable
                         {
                             await Dispatcher.BeginInvoke(() =>
                             {
-                                if (!_disposed && !_isClosing)
+                                if (!_disposed)
                                 {
                                     Close();
                                 }
@@ -258,7 +258,10 @@ public partial class MainWindow : IDisposable
             }
             finally
             {
-                _closingSemaphore.Release();
+                if (semaphoreAcquired)
+                {
+                    _closingSemaphore.Release();
+                }
             }
         }
         catch (Exception ex)
@@ -345,7 +348,6 @@ public partial class MainWindow : IDisposable
             var outputFolder = OutputFolderTextBox.Text;
             var deleteFiles = DeleteFilesCheckBox.IsChecked ?? false;
             var useParallelFileProcessing = ParallelProcessingCheckBox.IsChecked == true;
-            _processSmallerFilesFirst = ProcessSmallerFilesFirstCheckBox.IsChecked ?? true;
 
             // Update compression settings from UI
             UpdateBlockSizeFromSelection();
@@ -399,7 +401,6 @@ public partial class MainWindow : IDisposable
             LogMessage($"Delete original files: {deleteFiles}");
             LogMessage($"Parallel file processing: {useParallelFileProcessing} (Max concurrency: {_currentDegreeOfParallelismForFiles})");
             LogMessage($"RVZ Compression: Method={_rvzCompressionMethod}, Level={_rvzCompressionLevel}, Block Size={_rvzBlockSize}");
-            LogMessage($"Process smaller files first: {_processSmallerFilesFirst}");
 
             // Wrap the whole job in a task that we can await on exit
             _runningTask = Task.Run(async () =>
@@ -504,26 +505,6 @@ public partial class MainWindow : IDisposable
                 .Where(static file => AllSupportedInputExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
                 .ToArray();
 
-            // Add sorting by file size if the option is enabled
-            if (_processSmallerFilesFirst)
-            {
-                LogMessage("Sorting files by size (smallest first)...");
-                Array.Sort(files, static (x, y) =>
-                {
-                    try
-                    {
-                        var xInfo = new FileInfo(x);
-                        var yInfo = new FileInfo(y);
-                        return xInfo.Length.CompareTo(yInfo.Length);
-                    }
-                    catch
-                    {
-                        // If we can't get file info, maintain original order
-                        return 0;
-                    }
-                });
-            }
-
             _totalFilesToProcess = files.Length;
             UpdateStatsDisplay();
             LogMessage($"Found {_totalFilesToProcess} files to process.");
@@ -560,7 +541,7 @@ public partial class MainWindow : IDisposable
                     var fileName = Path.GetFileName(inputFile);
                     LogMessage($"[Parallel] Starting: {fileName}");
 
-                    var success = await ProcessFileAsync(dolphinToolPath, inputFile, outputFolder, deleteFiles, token);
+                    var success = await ProcessFileAsync(dolphinToolPath, inputFile, outputFolder, deleteFiles, true, token);
 
                     if (success)
                     {
@@ -605,7 +586,7 @@ public partial class MainWindow : IDisposable
 
                     LogMessage($"[Sequential] Processing: {fileName}");
 
-                    var success = await ProcessFileAsync(dolphinToolPath, t, outputFolder, deleteFiles, _cts.Token);
+                    var success = await ProcessFileAsync(dolphinToolPath, t, outputFolder, deleteFiles, false, _cts.Token);
 
                     if (success)
                     {
@@ -637,7 +618,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task<bool> ProcessFileAsync(string dolphinToolPath, string inputFile, string outputFolder, bool deleteOriginal, CancellationToken cancellationToken)
+    private async Task<bool> ProcessFileAsync(string dolphinToolPath, string inputFile, string outputFolder, bool deleteOriginal, bool parallelMode, CancellationToken cancellationToken)
     {
         var fileToProcess = inputFile;
         var isArchiveFile = false;
@@ -672,7 +653,8 @@ public partial class MainWindow : IDisposable
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            var outputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
+            // Get the base name without game image extensions (handles compound extensions like .nkit.iso)
+            var outputFile = Path.Combine(outputFolder, GetBaseFileNameWithoutGameExtension(fileToProcess) + ".rvz");
 
             if (File.Exists(outputFile))
             {
@@ -696,7 +678,7 @@ public partial class MainWindow : IDisposable
                 return true;
             }
 
-            var success = await ConvertToRvzAsync(dolphinToolPath, fileToProcess, outputFile, cancellationToken);
+            var success = await ConvertToRvzAsync(dolphinToolPath, fileToProcess, outputFile, parallelMode, cancellationToken);
 
             if (!success || !deleteOriginal) return success;
 
@@ -719,7 +701,7 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Processing cancelled for {Path.GetFileName(inputFile)}.");
 
-            var potentialOutputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
+            var potentialOutputFile = Path.Combine(outputFolder, GetBaseFileNameWithoutGameExtension(fileToProcess) + ".rvz");
 
             if (File.Exists(potentialOutputFile))
             {
@@ -746,7 +728,7 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Error processing file {Path.GetFileName(inputFile)}: {ex.Message}");
             await ReportBugAsync($"Error processing file: {Path.GetFileName(inputFile)}", ex);
-            var potentialOutputFile = Path.Combine(outputFolder, Path.GetFileNameWithoutExtension(fileToProcess) + ".rvz");
+            var potentialOutputFile = Path.Combine(outputFolder, GetBaseFileNameWithoutGameExtension(fileToProcess) + ".rvz");
             if (File.Exists(potentialOutputFile))
             {
                 // Small delay before attempting deletion
@@ -761,13 +743,13 @@ public partial class MainWindow : IDisposable
             if (isArchiveFile && !string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
             {
                 // Small delay before cleaning up temp directory
-                await Task.Delay(100, cancellationToken);
+                await Task.Delay(100, CancellationToken.None);
                 TryDeleteDirectory(tempDir, "temporary extraction directory");
             }
         }
     }
 
-    private async Task<bool> ConvertToRvzAsync(string dolphinToolPath, string inputFile, string outputFile, CancellationToken cancellationToken)
+    private async Task<bool> ConvertToRvzAsync(string dolphinToolPath, string inputFile, string outputFile, bool parallelMode, CancellationToken cancellationToken)
     {
         // Increment active conversion count for aggregate speed tracking
         Interlocked.Increment(ref _activeConversionCount);
@@ -840,13 +822,14 @@ public partial class MainWindow : IDisposable
                             process.Kill(true);
 
                             // Give it a moment to exit gracefully
-                            await Task.Delay(150, cancellationToken);
+                            // Use CancellationToken.None to ensure we actually wait for cleanup
+                            await Task.Delay(150, CancellationToken.None);
 
                             // If still running, force kill
                             if (!process.HasExited)
                             {
                                 process.Kill();
-                                await Task.Delay(100, cancellationToken);
+                                await Task.Delay(100, CancellationToken.None);
                             }
                         }
                     }
@@ -879,8 +862,9 @@ public partial class MainWindow : IDisposable
                             var bytesDelta = currentFileSize - lastFileSize;
                             // Report bytes written to aggregate counter for parallel processing
                             Interlocked.Add(ref _aggregateTotalBytesWritten, bytesDelta);
-                            // Only update UI directly if not in parallel mode (single file processing)
-                            if (Interlocked.CompareExchange(ref _activeConversionCount, 0, 0) <= 1)
+                            // Only update UI directly if NOT in parallel mode
+                            // In parallel mode, MonitorAggregateWriteSpeedAsync handles all UI updates
+                            if (!parallelMode)
                             {
                                 var speed = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
                                 UpdateWriteSpeedDisplay(speed);
@@ -1022,8 +1006,11 @@ public partial class MainWindow : IDisposable
                             var delay = 50 * (attempt + 1); // 50ms, 100ms, 150ms, ..., 500ms
                             LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
                             await Task.Delay(delay, CancellationToken.None);
-                            continue;
                         }
+
+                        // On last attempt, if file is still locked, skip to next iteration
+                        // which will exit the loop and return false
+                        continue;
                     }
 
                     // Try to remove read-only attribute if it exists
@@ -1160,26 +1147,17 @@ public partial class MainWindow : IDisposable
                         // Check for cancellation before starting the potentially long-running operation
                         cancellationToken.ThrowIfCancellationRequested();
 
-                        // Open the archive using SharpCompress based on extension
-                        IArchive? archive = null;
+                        // Get full path of tempDir for ZipSlip vulnerability protection
+                        var tempDirFullPath = Path.GetFullPath(tempDir);
+                        if (!tempDirFullPath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                        {
+                            tempDirFullPath += Path.DirectorySeparatorChar;
+                        }
+
+                        // Try the standard Archive API first (Seekable)
                         try
                         {
-                            archive = extension switch
-                            {
-                                ".zip" => ZipArchive.OpenArchive(archivePath),
-                                ".7z" => SevenZipArchive.OpenArchive(archivePath),
-                                ".rar" => RarArchive.OpenArchive(archivePath),
-                                _ => throw new InvalidOperationException($"Unsupported archive type: {extension}")
-                            };
-
-                            // Extract all entries to the temp directory
-                            // Get full path of tempDir for ZipSlip vulnerability protection
-                            var tempDirFullPath = Path.GetFullPath(tempDir);
-                            if (!tempDirFullPath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
-                            {
-                                tempDirFullPath += Path.DirectorySeparatorChar;
-                            }
-
+                            using var archive = ArchiveFactory.OpenArchive(archivePath);
                             foreach (var entry in archive.Entries.Where(static e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key)))
                             {
                                 cancellationToken.ThrowIfCancellationRequested();
@@ -1214,9 +1192,51 @@ public partial class MainWindow : IDisposable
                                 }
                             }
                         }
-                        finally
+                        catch (ArchiveException)
                         {
-                            (archive as IDisposable)?.Dispose();
+                            // FALLBACK: If the header at the end is missing,
+                            // try the Reader API (Streaming from the start)
+                            LogMessage($"Standard header not found. Trying streaming extraction for {archiveFileName}...");
+
+                            using Stream stream = File.OpenRead(archivePath);
+                            using var reader = ReaderFactory.OpenReader(stream, new ReaderOptions());
+                            while (reader.MoveToNextEntry())
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+
+                                if (reader.Entry.IsDirectory) continue;
+
+                                // Filter by extension before extracting
+                                var ext = Path.GetExtension(reader.Entry.Key);
+                                if (!PrimaryTargetExtensionsInsideArchive.Contains(ext, StringComparer.OrdinalIgnoreCase))
+                                {
+                                    continue;
+                                }
+
+                                if (reader.Entry.Key != null)
+                                {
+                                    var entryPath = Path.Combine(tempDir, reader.Entry.Key);
+                                    var entryFullPath = Path.GetFullPath(entryPath);
+
+                                    // ZipSlip protection: ensure the entry path is within the temp directory
+                                    if (!entryFullPath.StartsWith(tempDirFullPath, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        LogMessage($"Skipping potentially malicious archive entry with directory traversal: {reader.Entry.Key}");
+                                        continue;
+                                    }
+
+                                    var entryDir = Path.GetDirectoryName(entryPath);
+
+                                    if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
+                                    {
+                                        Directory.CreateDirectory(entryDir);
+                                    }
+
+                                    using var entryStream = reader.OpenEntryStream();
+                                    using var fileStream = File.Create(entryPath);
+                                    entryStream.CopyTo(fileStream);
+                                }
+                            }
                         }
 
                         // Check again after the operation if it was lengthy
@@ -1230,7 +1250,10 @@ public partial class MainWindow : IDisposable
                     // by throwing an OperationCanceledException, which is caught below.
                     break;
 
-                default: return (false, string.Empty, tempDir, $"Unsupported archive type: {extension}");
+                default:
+                    // Clean up the temporary directory on unsupported archive type
+                    TryDeleteDirectory(tempDir, "unsupported archive type extraction directory");
+                    return (false, string.Empty, string.Empty, $"Unsupported archive type: {extension}");
             }
 
             // After successful extraction (or if it wasn't cancelled during),
@@ -1245,7 +1268,7 @@ public partial class MainWindow : IDisposable
 
             // No supported game image found - clean up the temp directory to prevent disk leak
             TryDeleteDirectory(tempDir, "extraction directory with no supported game images");
-            return (false, string.Empty, tempDir, "No supported game image (.iso, .gcm, .wbfs, .nkit.iso) found in archive.");
+            return (false, string.Empty, string.Empty, "No supported game image (.iso, .gcm, .wbfs, .nkit.iso) found in archive.");
         }
         catch (OperationCanceledException)
         {
@@ -1268,7 +1291,7 @@ public partial class MainWindow : IDisposable
             TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the detailed error message
-            return (false, string.Empty, tempDir, errorMessage);
+            return (false, string.Empty, string.Empty, errorMessage);
         }
         catch (IOException ex) when (ex.Message.Contains("corrupt") || ex.Message.Contains("invalid"))
         {
@@ -1280,7 +1303,7 @@ public partial class MainWindow : IDisposable
             TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the detailed error message
-            return (false, string.Empty, tempDir, errorMessage);
+            return (false, string.Empty, string.Empty, errorMessage);
         }
         catch (IOException ex) when ((ex.HResult & 0xFFFF) == 0x70 || // ERROR_DISK_FULL (0x80070070)
                                      ex.Message.Contains("not enough space", StringComparison.OrdinalIgnoreCase) ||
@@ -1294,7 +1317,7 @@ public partial class MainWindow : IDisposable
             TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the detailed error message
-            return (false, string.Empty, tempDir, errorMessage);
+            return (false, string.Empty, string.Empty, errorMessage);
         }
         catch (Exception ex)
         {
@@ -1308,7 +1331,7 @@ public partial class MainWindow : IDisposable
             TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the error message
-            return (false, string.Empty, tempDir, $"Exception during extraction: {ex.Message}");
+            return (false, string.Empty, string.Empty, $"Exception during extraction: {ex.Message}");
         }
         finally
         {
@@ -1827,7 +1850,15 @@ public partial class MainWindow : IDisposable
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            await process.WaitForExitAsync(token);
+            try
+            {
+                await process.WaitForExitAsync(token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited) process.Kill(true);
+                throw;
+            }
 
             var output = outputBuilder.ToString();
             if (process.ExitCode == 0 && output.Contains("Problems Found: No"))
@@ -1996,12 +2027,12 @@ public partial class MainWindow : IDisposable
                     if (timeDelta.TotalSeconds > 0)
                     {
                         var currentTotalBytes = Interlocked.Read(ref _aggregateTotalBytesWritten);
-                        var bytesDelta = currentTotalBytes - _aggregateLastTotalBytes;
+                        var bytesDelta = currentTotalBytes - Interlocked.Read(ref _aggregateLastTotalBytes);
                         var speedInMBps = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
 
                         UpdateWriteSpeedDisplay(speedInMBps);
 
-                        _aggregateLastTotalBytes = currentTotalBytes;
+                        Interlocked.Exchange(ref _aggregateLastTotalBytes, currentTotalBytes);
                         _aggregateLastCheckTime = currentTime;
                     }
                 }
@@ -2120,5 +2151,32 @@ public partial class MainWindow : IDisposable
         {
             _rvzBlockSize = blockSize;
         }
+    }
+
+    /// <summary>
+    /// Gets the base file name without game image extensions.
+    /// Handles compound extensions like .nkit.iso correctly.
+    /// </summary>
+    private static string GetBaseFileNameWithoutGameExtension(string filePath)
+    {
+        var fileName = Path.GetFileName(filePath);
+
+        // Handle compound extension .nkit.iso first
+        if (fileName.EndsWith(".nkit.iso", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.GetFileNameWithoutExtension(fileName[..^4]); // Remove .iso first, then .nkit
+        }
+
+        // Handle other game image extensions
+        foreach (var ext in PrimaryTargetExtensionsInsideArchive)
+        {
+            if (fileName.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+            {
+                return fileName[..^ext.Length];
+            }
+        }
+
+        // Fallback to standard behavior
+        return Path.GetFileNameWithoutExtension(fileName);
     }
 }

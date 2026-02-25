@@ -19,6 +19,9 @@ public partial class UpdateService : IDisposable
         PooledConnectionLifetime = TimeSpan.FromMinutes(2)
     };
 
+    // Reference counter to track active instances for proper disposal of SharedHandler
+    private static int _instanceCount;
+
     private readonly HttpClient _httpClient;
     private readonly string _githubApiUrl;
 
@@ -29,6 +32,9 @@ public partial class UpdateService : IDisposable
     public UpdateService(string githubApiUrl)
     {
         _githubApiUrl = githubApiUrl;
+
+        // Increment instance counter for proper disposal tracking
+        Interlocked.Increment(ref _instanceCount);
 
         // Create a new HttpClient instance that shares the static handler
         // This allows per-instance headers while sharing the connection pool
@@ -98,6 +104,13 @@ public partial class UpdateService : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+
+        // Decrement counter and dispose SharedHandler when last instance is disposed
+        if (Interlocked.Decrement(ref _instanceCount) == 0)
+        {
+            SharedHandler.Dispose();
+        }
+
         GC.SuppressFinalize(this);
     }
 
