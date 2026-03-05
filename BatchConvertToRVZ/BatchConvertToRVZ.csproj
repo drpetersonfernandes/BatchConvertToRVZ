@@ -11,7 +11,7 @@
     <AssemblyVersion>1.7</AssemblyVersion>
     <FileVersion>1.7</FileVersion>
     <IsPackable>false</IsPackable>
-    <NeutralLanguage>en</NeutralLanguage>
+    <NeutralLanguage>en-US</NeutralLanguage>
     <AssemblyName>BatchConvertToRVZ</AssemblyName>
     <DebugType>embedded</DebugType>
     <DebugSymbols>true</DebugSymbols>
