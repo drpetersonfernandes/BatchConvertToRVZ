@@ -18,7 +18,7 @@ public partial class App
     // Stats API configuration
     private const string StatsApiUrl = "https://www.purelogiccode.com/ApplicationStats/stats";
     private const string StatsApiKey = "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e";
-    private const string StatsApplicationId = "batchconvertto-rvz";
+    private const string StatsApplicationId = "BatchConvertToRVZ";
 
     public static BugReportService? BugReportServiceInstance { get; private set; }
     public static StatsService? StatsServiceInstance { get; private set; }
@@ -32,9 +32,6 @@ public partial class App
         BugReportServiceInstance = new BugReportService(BugReportApiUrl, BugReportApiKey, ApplicationName);
         StatsServiceInstance = new StatsService(StatsApiUrl, StatsApiKey, StatsApplicationId);
 
-        // Send usage statistics on application launch
-        _ = StatsServiceInstance.SendUsageStatsAsync();
-
         // Set up global exception handling
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
         DispatcherUnhandledException += App_DispatcherUnhandledException;
@@ -42,6 +39,28 @@ public partial class App
 
         // Register the Exit event handler
         Exit += App_Exit;
+    }
+
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+
+        // Send usage statistics on application launch
+        if (StatsServiceInstance != null)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await StatsServiceInstance.SendUsageStatsAsync();
+                }
+                catch (Exception ex)
+                {
+                    // If statistics report fails, report it as a bug/log if needed
+                    ReportException(ex, "StatsService.OnStartup");
+                }
+            });
+        }
     }
 
     private static void CleanupOldDllFiles()

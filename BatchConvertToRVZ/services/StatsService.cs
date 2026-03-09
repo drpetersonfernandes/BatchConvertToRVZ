@@ -43,22 +43,28 @@ public class StatsService : IDisposable
     /// <returns>A task representing the asynchronous operation.</returns>
     public async Task<bool> SendUsageStatsAsync()
     {
-        try
+        var payload = new
         {
-            var payload = new
-            {
-                applicationId = _applicationId,
-                version = _applicationVersion
-            };
+            applicationId = _applicationId,
+            version = _applicationVersion
+        };
 
-            var response = await _httpClient.PostAsJsonAsync(_apiUrl, payload);
-            return response.IsSuccessStatusCode;
-        }
-        catch
+        var response = await _httpClient.PostAsJsonAsync(_apiUrl, payload);
+
+        if (!response.IsSuccessStatusCode)
         {
-            // Silently fail to not interrupt the user experience
-            return false;
+            var content = await response.Content.ReadAsStringAsync();
+
+            // Provide specific details for common failures
+            if ((int)response.StatusCode == 429)
+            {
+                throw new HttpRequestException($"Stats API Rate Limit: This IP has already reported stats for '{_applicationId}' within the rate limit period (usually 1 hour).");
+            }
+
+            throw new HttpRequestException($"Stats API failed with status {response.StatusCode}: {content}");
         }
+
+        return true;
     }
 
     private static string GetApplicationVersion()
