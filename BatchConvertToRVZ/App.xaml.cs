@@ -15,15 +15,25 @@ public partial class App
     private const string BugReportApiKey = "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e";
     private const string ApplicationName = "BatchConvertToRVZ";
 
+    // Stats API configuration
+    private const string StatsApiUrl = "https://www.purelogiccode.com/ApplicationStats/stats";
+    private const string StatsApiKey = "hjh7yu6t56tyr540o9u8767676r5674534453235264c75b6t7ggghgg76trf564e";
+    private const string StatsApplicationId = "batchconvertto-rvz";
+
     public static BugReportService? BugReportServiceInstance { get; private set; }
+    public static StatsService? StatsServiceInstance { get; private set; }
 
     public App()
     {
         // Clean up old DLL files from previous versions
         CleanupOldDllFiles();
 
-        // Initialize the bug report service
+        // Initialize the services
         BugReportServiceInstance = new BugReportService(BugReportApiUrl, BugReportApiKey, ApplicationName);
+        StatsServiceInstance = new StatsService(StatsApiUrl, StatsApiKey, StatsApplicationId);
+
+        // Send usage statistics on application launch
+        _ = StatsServiceInstance.SendUsageStatsAsync();
 
         // Set up global exception handling
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
@@ -58,8 +68,9 @@ public partial class App
 
     private void App_Exit(object sender, ExitEventArgs e)
     {
-        // Dispose of the shared BugReportService instance
+        // Dispose of the services
         BugReportServiceInstance?.Dispose();
+        StatsServiceInstance?.Dispose();
 
         // Unregister event handlers to prevent memory leaks
         AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
