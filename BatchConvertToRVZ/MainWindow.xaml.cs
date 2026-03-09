@@ -454,7 +454,9 @@ public partial class MainWindow : IDisposable
 
     private void SetControlsState(bool enabled)
     {
-        Application.Current.Dispatcher.InvokeAsync(() =>
+        // Use Invoke (synchronous) to ensure UI updates complete before returning.
+        // This is important when called from background threads (e.g., Task.Run).
+        Dispatcher.Invoke(() =>
         {
             MainTabControl.IsEnabled = enabled;
 
@@ -1616,7 +1618,7 @@ public partial class MainWindow : IDisposable
 
     private void ClearProgressDisplay()
     {
-        Application.Current.Dispatcher.InvokeAsync(() =>
+        Dispatcher.Invoke(() =>
         {
             ProgressBar.Value = 0; // Reset progress
             ProgressBar.Maximum = 1; // Ensure the maximum is not zero when idle
@@ -1978,7 +1980,7 @@ public partial class MainWindow : IDisposable
 
     private void UpdateStatsDisplay()
     {
-        Application.Current.Dispatcher.InvokeAsync(() =>
+        Dispatcher.Invoke(() =>
         {
             TotalFilesValue.Text = _totalFilesToProcess.ToString(CultureInfo.InvariantCulture);
             SuccessValue.Text = _successCount.ToString(CultureInfo.InvariantCulture);
@@ -1989,7 +1991,7 @@ public partial class MainWindow : IDisposable
     private void UpdateProcessingTimeDisplay()
     {
         var elapsed = _operationTimer.Elapsed;
-        Application.Current.Dispatcher.InvokeAsync(() =>
+        Dispatcher.Invoke(() =>
         {
             ProcessingTimeValue.Text = $"{(int)elapsed.TotalHours:D2}:{elapsed:mm\\:ss}";
         });
@@ -1997,7 +1999,7 @@ public partial class MainWindow : IDisposable
 
     private void UpdateWriteSpeedDisplay(double speedInMBps)
     {
-        Application.Current.Dispatcher.InvokeAsync(() =>
+        Dispatcher.Invoke(() =>
         {
             WriteSpeedValue.Text = $"{speedInMBps:F1} MB/s";
         });
@@ -2050,7 +2052,7 @@ public partial class MainWindow : IDisposable
 
     private void UpdateProgressDisplay(int current, int total, string currentFileName, string operationVerb)
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        Dispatcher.Invoke(() =>
         {
             var percentage = total == 0 ? 0 : (double)current / total * 100;
             ProgressText.Text = $"{operationVerb} file {current} of {total}: {currentFileName} ({percentage:F1}%)";
