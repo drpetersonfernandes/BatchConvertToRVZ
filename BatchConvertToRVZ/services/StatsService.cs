@@ -41,7 +41,7 @@ public class StatsService : IDisposable
     /// Sends usage statistics to the API.
     /// </summary>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public async Task<bool> SendUsageStatsAsync()
+    public async Task SendUsageStatsAsync()
     {
         var payload = new
         {
@@ -63,8 +63,6 @@ public class StatsService : IDisposable
 
             throw new HttpRequestException($"Stats API failed with status {response.StatusCode}: {content}");
         }
-
-        return true;
     }
 
     private static string GetApplicationVersion()

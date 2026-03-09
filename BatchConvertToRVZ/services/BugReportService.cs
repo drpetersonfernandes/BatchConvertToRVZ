@@ -94,10 +94,10 @@ public class BugReportService : IDisposable
         {
             Message = message,
             ApplicationName = _applicationName,
-            Date = DateTime.Now.ToString("yyyy/M/d tt h:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
+            Date = DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
             ApplicationVersion = _applicationVersion,
             OsVersion = Environment.OSVersion.ToString(),
-            Architecture = RuntimeInformation.ProcessArchitecture.ToString(),
+            Architecture = RuntimeInformation.ProcessArchitecture.ToString().ToUpperInvariant(),
             Bitness = Environment.Is64BitOperatingSystem ? "64-bit" : "32-bit",
             WindowsVersion = GetWindowsVersion()
         };
