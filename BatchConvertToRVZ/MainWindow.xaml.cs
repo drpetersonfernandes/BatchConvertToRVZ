@@ -667,12 +667,14 @@ public partial class MainWindow : IDisposable
                 {
                     if (isArchiveFile)
                     {
-                        await Task.Delay(50, cancellationToken);
+                        // Wait for file handles to be released by OS/antivirus
+                        await Task.Delay(2000, cancellationToken);
                         await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", cancellationToken);
                     }
                     else
                     {
-                        await Task.Delay(50, cancellationToken);
+                        // Wait for file handles to be released by OS/antivirus
+                        await Task.Delay(2000, cancellationToken);
                         await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", cancellationToken);
                     }
                 }
@@ -686,14 +688,14 @@ public partial class MainWindow : IDisposable
 
             if (isArchiveFile)
             {
-                // Small delay before deleting original archive
-                await Task.Delay(50, cancellationToken);
+                // Wait for file handles to be released by OS/antivirus
+                await Task.Delay(2000, cancellationToken);
                 await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", cancellationToken);
             }
             else
             {
-                // Small delay before deleting original ISO
-                await Task.Delay(50, cancellationToken);
+                // Wait for file handles to be released by OS/antivirus
+                await Task.Delay(2000, cancellationToken);
                 await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", cancellationToken);
             }
 
@@ -988,11 +990,28 @@ public partial class MainWindow : IDisposable
             if (!File.Exists(filePath)) return true;
 
             // Try multiple times with increasing delays and different approaches
-            for (var attempt = 0; attempt < 10; attempt++) // Increased to 10 attempts
+            const int maxAttempts = 15; // Increased to 15 attempts
+            for (var attempt = 0; attempt < maxAttempts; attempt++)
             {
                 try
                 {
-                    // First check if file is locked by trying to open it
+                    // Force garbage collection to release any lingering handles
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+
+                    // Try to clear all file attributes first
+                    try
+                    {
+                        File.SetAttributes(filePath, FileAttributes.Normal);
+                    }
+                    catch
+                    {
+                        // Ignore - will try again or handle during delete
+                    }
+
+                    // Check if file is locked by trying to open it exclusively
+                    var isLocked = false;
                     try
                     {
                         await using (new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
@@ -1002,16 +1021,19 @@ public partial class MainWindow : IDisposable
                     }
                     catch (IOException)
                     {
-                        // File is locked, wait and retry
-                        if (attempt < 9) // Don't log on the last attempt
+                        isLocked = true;
+                    }
+
+                    if (isLocked)
+                    {
+                        if (attempt < maxAttempts - 1)
                         {
-                            var delay = 50 * (attempt + 1); // 50ms, 100ms, 150ms, ..., 500ms
-                            LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
+                            // Exponential backoff: 500ms, 1000ms, 1500ms, up to 5000ms
+                            var delay = Math.Min(500 * (attempt + 1), 5000);
+                            LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/{maxAttempts}. Waiting {delay}ms...");
                             await Task.Delay(delay, CancellationToken.None);
                         }
 
-                        // On last attempt, if file is still locked, skip to next iteration
-                        // which will exit the loop and return false
                         continue;
                     }
 
@@ -1030,22 +1052,23 @@ public partial class MainWindow : IDisposable
                 catch (IOException ioEx) when ((ioEx.HResult & 0xFFFF) == 32 || // ERROR_SHARING_VIOLATION
                                                (ioEx.HResult & 0xFFFF) == 33) // ERROR_LOCK_VIOLATION
                 {
-                    if (attempt < 9) // Don't log on the last attempt
+                    if (attempt < maxAttempts - 1)
                     {
-                        var delay = 100 * (attempt + 1); // 100ms, 200ms, 300ms, ..., 1000ms
-                        LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/10. Waiting {delay}ms...");
+                        // Exponential backoff: 500ms, 1000ms, 1500ms, up to 5000ms
+                        var delay = Math.Min(500 * (attempt + 1), 5000);
+                        LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/{maxAttempts}. Waiting {delay}ms...");
                         await Task.Delay(delay, CancellationToken.None);
                     }
                     else
                     {
-                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts: {ioEx.Message}");
+                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after {maxAttempts} attempts: {ioEx.Message}");
                         _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)} after multiple attempts", ioEx), cancellationToken);
                         return false;
                     }
                 }
                 catch (UnauthorizedAccessException authEx)
                 {
-                    // Try to reset file attributes
+                    // Try to reset file attributes with multiple approaches
                     try
                     {
                         File.SetAttributes(filePath, FileAttributes.Normal);
@@ -1055,15 +1078,16 @@ public partial class MainWindow : IDisposable
                         // Ignore errors when trying to reset attributes
                     }
 
-                    if (attempt < 9)
+                    if (attempt < maxAttempts - 1)
                     {
-                        var delay = 150 * (attempt + 1);
-                        LogMessage($"Access denied for {Path.GetFileName(filePath)}. Attempt {attempt + 1}/10. Waiting {delay}ms...");
+                        // Longer delays for access denied: 1000ms, 2000ms, up to 5000ms
+                        var delay = Math.Min(1000 * (attempt + 1), 5000);
+                        LogMessage($"Access denied for {Path.GetFileName(filePath)}. Attempt {attempt + 1}/{maxAttempts}. Waiting {delay}ms...");
                         await Task.Delay(delay, CancellationToken.None);
                     }
                     else
                     {
-                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after 10 attempts due to access denied: {authEx.Message}");
+                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after {maxAttempts} attempts due to access denied: {authEx.Message}");
                         _ = Task.Run(() => ReportBugAsync($"Access denied when deleting {description}: {Path.GetFileName(filePath)} after multiple attempts", authEx), cancellationToken);
                         return false;
                     }
