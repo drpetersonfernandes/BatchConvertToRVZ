@@ -56,7 +56,14 @@ public partial class App
                 }
                 catch (Exception ex)
                 {
-                    // If statistics report fails, report it as a bug/log if needed
+                    // Silently ignore rate limit exceptions - this is expected behavior
+                    // when the user launches the app multiple times within the rate limit window
+                    if (ex.Message.Contains("Rate Limit", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+
+                    // Only report other types of exceptions that might indicate actual problems
                     ReportException(ex, "StatsService.OnStartup");
                 }
             });
