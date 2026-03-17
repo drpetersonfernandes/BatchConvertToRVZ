@@ -13,7 +13,7 @@
             Terminal: Black (#0a0a0a) + Neon Green (#39FF14) - PRESERVED
         -->
 
-        <!-- ==================== TERMINAL COLORS (PRESERVED) ==================== -->
+        <!-- ==================== TERMINAL COLORS ==================== -->
         <SolidColorBrush x:Key="TerminalBackgroundBrush" Color="#0a0a0a"/>
         <SolidColorBrush x:Key="TerminalBorderBrush" Color="#1a1a1a"/>
         <SolidColorBrush x:Key="TerminalForegroundBrush" Color="#39FF14"/>
@@ -308,13 +308,14 @@
 
         <!-- Default ComboBox Style -->
         <Style TargetType="ComboBox">
-            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Padding" Value="10,8"/>
             <Setter Property="MinHeight" Value="30"/>
-            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
-            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}"/>
-            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="Background" Value="{StaticResource CardBackgroundHoverBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource HeaderTextBrush}"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -338,19 +339,13 @@
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
-                                                <ContentPresenter Grid.Column="0"
-                                                                  Margin="{TemplateBinding Padding}"
-                                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                                                  Content="{TemplateBinding Content}"
-                                                                  ContentTemplate="{TemplateBinding ContentTemplate}"/>
                                                 <Path x:Name="Arrow"
                                                       Grid.Column="1"
                                                       HorizontalAlignment="Center"
                                                       VerticalAlignment="Center"
                                                       Margin="5"
                                                       Data="M 0 0 L 4 4 L 8 0 Z"
-                                                      Fill="{StaticResource TextPrimaryBrush}"/>
+                                                      Fill="{StaticResource PrimaryAccentBrush}"/>
                                             </Grid>
                                         </Border>
                                         <ControlTemplate.Triggers>
@@ -368,6 +363,15 @@
                                     </ControlTemplate>
                                 </ToggleButton.Template>
                             </ToggleButton>
+                            <ContentPresenter x:Name="ContentSite"
+                                              IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                              Margin="{TemplateBinding Padding}"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Left"
+                                              TextBlock.Foreground="{TemplateBinding Foreground}"/>
                             <Popup x:Name="Popup"
                                    Placement="Bottom"
                                    IsOpen="{TemplateBinding IsDropDownOpen}"
@@ -399,7 +403,9 @@
         <!-- Default ComboBoxItem Style -->
         <Style TargetType="ComboBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource HeaderTextBrush}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Padding" Value="10,5"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -416,7 +422,7 @@
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Border" Property="Background" Value="{StaticResource PrimaryAccentBrush}"/>
-                                <Setter Property="Foreground" Value="#121518"/>
+                                <Setter Property="Foreground" Value="{StaticResource HeaderTextBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

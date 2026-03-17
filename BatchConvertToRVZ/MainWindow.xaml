@@ -105,8 +105,8 @@
                                         <CheckBox x:Name="ParallelProcessingCheckBox" Content="Enable parallel processing" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Process multiple files simultaneously to speed up conversion" />
 
                                         <StackPanel Orientation="Horizontal" Margin="20,5,0,5" IsEnabled="{Binding ElementName=ParallelProcessingCheckBox, Path=IsChecked}">
-                                            <Label Content="Max concurrent:" VerticalAlignment="Center" />
-                                            <ComboBox x:Name="DegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" Margin="5,0,0,0">
+                                            <Label Content="Max concurrent:" VerticalAlignment="Center" ToolTip="Maximum number of simultaneous conversion tasks" />
+                                            <ComboBox x:Name="DegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" Margin="5,0,0,0" ToolTip="Maximum number of simultaneous conversion tasks">
                                                 <ComboBoxItem Content="2" />
                                                 <ComboBoxItem Content="3" />
                                             </ComboBox>
@@ -122,8 +122,8 @@
                                                 <ColumnDefinition Width="80" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
-                                            <Label Content="Method:" VerticalAlignment="Center" />
-                                            <ComboBox x:Name="CompressionMethodComboBox" Grid.Column="1" VerticalAlignment="Center" SelectedIndex="0" SelectionChanged="CompressionMethodComboBox_SelectionChanged">
+                                            <Label Content="Method:" VerticalAlignment="Center" ToolTip="Compression algorithm" />
+                                            <ComboBox x:Name="CompressionMethodComboBox" Grid.Column="1" VerticalAlignment="Center" SelectedIndex="0" SelectionChanged="CompressionMethodComboBox_SelectionChanged" ToolTip="Compression algorithm used for RVZ files">
                                                 <ComboBoxItem Content="zstd (Zstandard)" Tag="zstd" />
                                                 <ComboBoxItem Content="zlib" Tag="zlib" />
                                                 <ComboBoxItem Content="lzma" Tag="lzma" />
@@ -139,9 +139,9 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="30" />
                                             </Grid.ColumnDefinitions>
-                                            <Label Content="Level:" VerticalAlignment="Center" />
-                                            <Slider x:Name="CompressionLevelSlider" Grid.Column="1" VerticalAlignment="Center" Minimum="1" Maximum="22" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="CompressionLevelSlider_ValueChanged" />
-                                            <TextBlock x:Name="CompressionLevelValue" Grid.Column="2" Text="5" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="Bold" Foreground="{StaticResource PrimaryAccentBrush}" />
+                                            <Label Content="Level:" VerticalAlignment="Center" ToolTip="Compression level" />
+                                            <Slider x:Name="CompressionLevelSlider" Grid.Column="1" VerticalAlignment="Center" Minimum="1" Maximum="22" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="CompressionLevelSlider_ValueChanged" ToolTip="Compression level (higher = better compression but slower)" />
+                                            <TextBlock x:Name="CompressionLevelValue" Grid.Column="2" Text="5" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="Bold" Foreground="{StaticResource PrimaryAccentBrush}" ToolTip="Current compression level" />
                                         </Grid>
 
                                         <Grid Margin="0,0,0,0">
@@ -149,8 +149,8 @@
                                                 <ColumnDefinition Width="80" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
-                                            <Label Content="Block Size:" VerticalAlignment="Center" />
-                                            <ComboBox x:Name="BlockSizeComboBox" Grid.Column="1" VerticalAlignment="Center" SelectedIndex="2">
+                                            <Label Content="Block Size:" VerticalAlignment="Center" ToolTip="Block size for RVZ container" />
+                                            <ComboBox x:Name="BlockSizeComboBox" Grid.Column="1" VerticalAlignment="Center" SelectedIndex="2" ToolTip="Block size for RVZ container (affects compression efficiency)">
                                                 <ComboBoxItem Content="32 KB" Tag="32768" />
                                                 <ComboBoxItem Content="64 KB" Tag="65536" />
                                                 <ComboBoxItem Content="128 KB" Tag="131072" />
@@ -188,15 +188,15 @@
                                 <StackPanel>
                                     <CheckBox x:Name="VerifyParallelProcessingCheckBox" Content="Enable parallel processing" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Verify multiple files simultaneously" />
                                     <StackPanel Orientation="Horizontal" Margin="20,5,0,5" IsEnabled="{Binding ElementName=VerifyParallelProcessingCheckBox, Path=IsChecked}">
-                                        <Label Content="Max concurrent:" VerticalAlignment="Center" />
-                                        <ComboBox x:Name="VerifyDegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" Margin="5,0,0,0">
+                                        <Label Content="Max concurrent:" VerticalAlignment="Center" ToolTip="Maximum number of simultaneous verification tasks" />
+                                        <ComboBox x:Name="VerifyDegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" Margin="5,0,0,0" ToolTip="Maximum number of simultaneous verification tasks">
                                             <ComboBoxItem Content="2" />
                                             <ComboBoxItem Content="3" />
                                         </ComboBox>
                                     </StackPanel>
 
-                                    <CheckBox x:Name="MoveFailedCheckBox" Content="Move failed RVZ files to '_Failed' subfolder" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" />
-                                    <CheckBox x:Name="MoveSuccessCheckBox" Content="Move successful RVZ files to '_Success' subfolder" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" />
+                                    <CheckBox x:Name="MoveFailedCheckBox" Content="Move failed RVZ files to '_Failed' subfolder" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Move files that fail verification to a separate folder" />
+                                    <CheckBox x:Name="MoveSuccessCheckBox" Content="Move successful RVZ files to '_Success' subfolder" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Move successfully verified files to a separate folder" />
                                 </StackPanel>
                             </GroupBox>
 
@@ -212,6 +212,8 @@
                          AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
                          HorizontalScrollBarVisibility="Auto"
+                         VerticalAlignment="Stretch"
+                         VerticalContentAlignment="Top"
                          IsReadOnly="True"
                          Padding="10"
                          FontFamily="Consolas"
@@ -281,17 +283,17 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0">
-                    <TextBlock x:Name="ProgressText" Margin="0,0,0,5" HorizontalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" />
-                    <ProgressBar x:Name="ProgressBar" Height="20" />
+                    <TextBlock x:Name="ProgressText" Margin="0,0,0,5" HorizontalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Current progress status" />
+                    <ProgressBar x:Name="ProgressBar" Height="20" ToolTip="Overall conversion/verification progress" />
                 </StackPanel>
-                <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Click="CancelButton_Click" Style="{StaticResource CancelButtonStyle}" Width="100" Margin="10,0,0,0" Visibility="Collapsed" VerticalAlignment="Bottom" />
+                <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Click="CancelButton_Click" Style="{StaticResource CancelButtonStyle}" Width="100" Margin="10,0,0,0" Visibility="Collapsed" VerticalAlignment="Bottom" ToolTip="Cancel the current operation" />
             </Grid>
         </Grid>
 
         <!-- Status Bar -->
         <StatusBar Grid.Row="2">
             <StatusBarItem>
-                <TextBlock Text="Ready" Foreground="{StaticResource TextSecondaryBrush}" />
+                <TextBlock Text="Ready" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Application status" />
             </StatusBarItem>
         </StatusBar>
 

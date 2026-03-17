@@ -27,7 +27,7 @@
         <Border Grid.Row="1" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,15" Padding="15" ToolTip="Application name and version">
             <StackPanel>
                 <TextBlock FontWeight="Bold" FontSize="20" Foreground="{StaticResource HeaderTextBrush}" Text="Batch Convert to RVZ" HorizontalAlignment="Center" />
-                <TextBlock Name="AppVersionTextBlock" Margin="0,8,0,0" Text="" HorizontalAlignment="Center" Foreground="{StaticResource PrimaryAccentBrush}" FontWeight="SemiBold" FontSize="14" />
+                <TextBlock Name="AppVersionTextBlock" Margin="0,8,0,0" Text="" HorizontalAlignment="Center" Foreground="{StaticResource PrimaryAccentBrush}" FontWeight="SemiBold" FontSize="14" ToolTip="Application version" />
             </StackPanel>
         </Border>
 
@@ -55,12 +55,12 @@
                 <TextBlock FontWeight="Bold" FontSize="14" Foreground="{StaticResource TextPrimaryBrush}" Text="Acknowledgements" Margin="0,0,0,10" />
                 <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
                     <Run Text="• Uses " />
-                    <Hyperlink NavigateUri="https://dolphin-emu.org/" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{StaticResource PrimaryAccentBrush}" FontWeight="Bold" TextDecorations="None">DolphinTool.exe</Hyperlink>
+                    <Hyperlink NavigateUri="https://dolphin-emu.org/" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{StaticResource PrimaryAccentBrush}" FontWeight="Bold" TextDecorations="None" ToolTip="Open Dolphin Emulator website">DolphinTool.exe</Hyperlink>
                     <Run Text=" from the Dolphin Emulator project for conversions." />
                 </TextBlock>
                 <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
                     <Run Text="• Uses " />
-                    <Hyperlink NavigateUri="https://github.com/adamhathcock/sharpcompress" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{StaticResource PrimaryAccentBrush}" FontWeight="Bold" TextDecorations="None">SharpCompress</Hyperlink>
+                    <Hyperlink NavigateUri="https://github.com/adamhathcock/sharpcompress" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{StaticResource PrimaryAccentBrush}" FontWeight="Bold" TextDecorations="None" ToolTip="Open SharpCompress GitHub repository">SharpCompress</Hyperlink>
                     <Run Text=" for .7z and .rar archive extraction." />
                 </TextBlock>
             </StackPanel>
