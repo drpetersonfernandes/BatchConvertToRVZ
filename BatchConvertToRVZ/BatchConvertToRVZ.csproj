@@ -1,52 +1,54 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
-    <ApplicationIcon>icon\icon.ico</ApplicationIcon>
-    <SupportedOSPlatformVersion>7.0</SupportedOSPlatformVersion>
-    <AssemblyVersion>1.7.1</AssemblyVersion>
-    <FileVersion>1.7.1</FileVersion>
-    <IsPackable>false</IsPackable>
-    <NeutralLanguage>en-US</NeutralLanguage>
-    <AssemblyName>BatchConvertToRVZ</AssemblyName>
-    <DebugType>embedded</DebugType>
-    <DebugSymbols>true</DebugSymbols>
-  </PropertyGroup>
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <UseWPF>true</UseWPF>
+        <ApplicationIcon>icon\icon.ico</ApplicationIcon>
+        <SupportedOSPlatformVersion>7.0</SupportedOSPlatformVersion>
+        <AssemblyVersion>1.7.1</AssemblyVersion>
+        <FileVersion>1.7.1</FileVersion>
+        <IsPackable>false</IsPackable>
+        <NeutralLanguage>en-US</NeutralLanguage>
+        <AssemblyName>BatchConvertToRVZ</AssemblyName>
+        <DebugType>embedded</DebugType>
+        <DebugSymbols>true</DebugSymbols>
+    </PropertyGroup>
 
-  <ItemGroup>
-    <!-- Reuse or replace icons -->
-    <Resource Include="icon\icon.ico" />
-    <Resource Include="icon\icon.png" />
-    <Resource Include="images\about.png" />
-    <Resource Include="images\exit.png" />
-    <Resource Include="images\logo.png" />
-    <Resource Include="images\update.png" />
-    <None Update="DolphinTool_arm64.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+    <ItemGroup>
+        <Resource Include="icon\icon.ico" />
+        <Resource Include="icon\icon.png" />
+        <Resource Include="images\about.png" />
+        <Resource Include="images\exit.png" />
+        <Resource Include="images\logo.png" />
+        <Resource Include="images\update.png" />
+        <None Update="DolphinTool_arm64.exe">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
 
-  <ItemGroup>
-    <!-- Ensure DolphinTool.exe is copied -->
-    <None Update="DolphinTool.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <!-- Removed chdman.exe and 7z files -->
-  </ItemGroup>
+    <ItemGroup>
+        <None Update="DolphinTool.exe">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="SharpCompress" Version="0.47.0" />
-  </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="SharpCompress" Version="0.47.1" />
+    </ItemGroup>
 
-  <ItemGroup>
-    <Compile Remove="References\**" />
-    <EmbeddedResource Remove="References\**" />
-    <None Remove="References\**" />
-    <Page Remove="References\**" />
-  </ItemGroup>
+    <ItemGroup>
+        <None Remove="References\**" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Remove="References\**" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Page Remove="References\**" />
+    </ItemGroup>
 
 </Project>
