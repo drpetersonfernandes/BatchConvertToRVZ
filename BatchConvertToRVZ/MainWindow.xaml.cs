@@ -1345,6 +1345,18 @@ public partial class MainWindow : IDisposable
             // Return a failure result with the detailed error message
             return (false, string.Empty, string.Empty, errorMessage);
         }
+        catch (SharpCompressException ex)
+        {
+            // Handle SharpCompress errors (corrupt data, LZMA errors, etc.) without sending a bug report.
+            var errorMessage = $"Failed to extract archive {archiveFileName}. The archive data is corrupt or invalid. Error: {ex.Message}";
+            LogMessage(errorMessage);
+
+            // Clean up the temporary directory on failure
+            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+
+            // Return a failure result with the detailed error message
+            return (false, string.Empty, string.Empty, errorMessage);
+        }
         catch (Exception ex)
         {
             // Log any other exceptions that occurred during extraction
