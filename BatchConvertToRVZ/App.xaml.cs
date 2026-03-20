@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
@@ -146,16 +145,9 @@ public partial class App
     {
         var sb = new StringBuilder();
         sb.AppendLine(CultureInfo.InvariantCulture, $"Error Source: {source}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Date and Time: {DateTime.Now}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"OS Version: {Environment.OSVersion}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $".NET Version: {Environment.Version}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Architecture: {RuntimeInformation.ProcessArchitecture}");
         sb.AppendLine();
-
-        // Add exception details
         sb.AppendLine("Exception Details:");
         AppendExceptionDetails(sb, exception);
-
         return sb.ToString();
     }
 

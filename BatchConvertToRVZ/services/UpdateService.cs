@@ -12,15 +12,12 @@ namespace BatchConvertToRVZ.services;
 /// </summary>
 public partial class UpdateService : IDisposable
 {
-    // Shared static HttpClient instance to prevent socket exhaustion
-    // SocketsHttpHandler with PooledConnectionLifetime ensures proper connection pooling
+    // Shared static HttpClient handler to prevent socket exhaustion.
+    // Not disposed explicitly — lives for the app lifetime and is cleaned up by the finalizer on exit.
     private static readonly SocketsHttpHandler SharedHandler = new()
     {
         PooledConnectionLifetime = TimeSpan.FromMinutes(2)
     };
-
-    // Reference counter to track active instances for proper disposal of SharedHandler
-    private static int _instanceCount;
 
     private readonly HttpClient _httpClient;
     private readonly string _githubApiUrl;
@@ -32,9 +29,6 @@ public partial class UpdateService : IDisposable
     public UpdateService(string githubApiUrl)
     {
         _githubApiUrl = githubApiUrl;
-
-        // Increment instance counter for proper disposal tracking
-        Interlocked.Increment(ref _instanceCount);
 
         // Create a new HttpClient instance that shares the static handler
         // This allows per-instance headers while sharing the connection pool
@@ -91,29 +85,38 @@ public partial class UpdateService : IDisposable
     /// <summary>
     /// Parses a <see cref="Version"/> object from a GitHub tag name.
     /// </summary>
-    /// <param name="tagName">The tag name (e.g., "v1.2.3" or "release-1.2.3").</param>
+    /// <param name="tagName">The tag name (e.g., "v1.2.3", "release-1.2.3", "v1.2", "v1.7.1-beta.1").</param>
     /// <returns>A <see cref="Version"/> object or null if parsing fails.</returns>
     private static Version? ParseVersionFromTag(string tagName)
     {
-        // Extract only the numeric version components (e.g., "1.2.3" or "1.2.3.4")
-        // This handles prefixes like "v" or "release-" and suffixes like "-beta" or "-rc1"
-        var match = MyRegex().Match(tagName);
-        return match.Success && Version.TryParse(match.Value, out var version) ? version : null;
+        if (string.IsNullOrWhiteSpace(tagName))
+            return null;
+
+        // Trim whitespace and leading 'v'/'V' prefix commonly used in tags
+        var tag = tagName.Trim();
+        if (tag.Length > 0 && tag[0] is 'v' or 'V')
+        {
+            tag = tag[1..];
+        }
+
+        // Extract numeric version: supports 2, 3, or 4 segment versions
+        // e.g., "1.2", "1.2.3", "1.2.3.4"
+        var match = VersionCoreRegex().Match(tag);
+        if (!match.Success || !Version.TryParse(match.Value, out var version))
+            return null;
+
+        // Strip pre-release suffixes (e.g., "-beta", "-rc1", "-alpha.2")
+        // by parsing only the numeric core. This avoids Version.TryParse
+        // misinterpreting "-beta" as part of the build number.
+        return version;
     }
+
+    [GeneratedRegex(@"\d+\.\d+(\.\d+)?(\.\d+)?")]
+    private static partial Regex VersionCoreRegex();
 
     public void Dispose()
     {
         _httpClient.Dispose();
-
-        // Decrement counter and dispose SharedHandler when last instance is disposed
-        if (Interlocked.Decrement(ref _instanceCount) == 0)
-        {
-            SharedHandler.Dispose();
-        }
-
         GC.SuppressFinalize(this);
     }
-
-    [GeneratedRegex(@"\d+\.\d+\.\d+(\.\d+)?")]
-    private static partial Regex MyRegex();
 }

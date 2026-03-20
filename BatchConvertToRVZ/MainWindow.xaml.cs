@@ -55,6 +55,13 @@ public partial class MainWindow : IDisposable
     // Supported extension for verification
     private static readonly string[] RvzExtension = [".rvz"];
 
+    // Pre-formatted extension lists for user-facing messages
+    private static readonly string SupportedInputExtensionsDisplay = string.Join(", ", AllSupportedInputExtensions);
+    private static readonly string PrimaryTargetExtensionsDisplay = string.Join(", ", PrimaryTargetExtensionsInsideArchive);
+    private static readonly string RvzExtensionDisplay = string.Join(", ", RvzExtension);
+
+    private const string NoSupportedGameImageMessage = "No supported game image";
+
     // Statistics
     private int _totalFilesToProcess;
     private int _successCount;
@@ -66,7 +73,6 @@ public partial class MainWindow : IDisposable
 
     // Thread-safe fields for aggregate write speed tracking during parallel processing
     private long _aggregateTotalBytesWritten;
-    private long _aggregateLastTotalBytes;
     private DateTime _aggregateLastCheckTime = DateTime.UtcNow;
     private readonly object _aggregateSpeedLock = new();
     private int _activeConversionCount;
@@ -75,8 +81,8 @@ public partial class MainWindow : IDisposable
     private bool _moveFailedFiles;
     private bool _moveSuccessFiles;
 
-    // Field to track if an extraction is currently in progress
-    private bool _isExtracting;
+    // Counter to track active extractions (supports concurrent extractions in parallel mode)
+    private int _activeExtractionCount;
 
 
     public MainWindow()
@@ -147,25 +153,16 @@ public partial class MainWindow : IDisposable
         LogMessage("");
     }
 
-    private string GetDolphinToolExecutableName()
+    private static string GetDolphinToolExecutableName()
     {
-        try
+        var architecture = RuntimeInformation.ProcessArchitecture;
+        // ReSharper disable once SwitchExpressionHandlesSomeKnownEnumValuesWithExceptionInDefault
+        return architecture switch
         {
-            var architecture = RuntimeInformation.ProcessArchitecture;
-            // ReSharper disable once SwitchExpressionHandlesSomeKnownEnumValuesWithExceptionInDefault
-            return architecture switch
-            {
-                Architecture.X64 => "DolphinTool.exe",
-                Architecture.Arm64 => "DolphinTool_arm64.exe",
-                _ => throw new PlatformNotSupportedException($"Unsupported architecture: {architecture}")
-            };
-        }
-        catch (Exception ex)
-        {
-            _ = ReportBugAsync("Error in method GetDolphinToolExecutableName", ex);
-        }
-
-        return "DolphinTool.exe";
+            Architecture.X64 => "DolphinTool.exe",
+            Architecture.Arm64 => "DolphinTool_arm64.exe",
+            _ => throw new PlatformNotSupportedException($"Unsupported architecture: {architecture}")
+        };
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -181,92 +178,52 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private readonly SemaphoreSlim _closingSemaphore = new(1, 1);
-
-    private async void Window_Closing(object sender, CancelEventArgs e)
+    private async void Window_Closing(object? sender, CancelEventArgs e)
     {
         try
         {
-            // Prevent re-entrancy if we're already in the process of closing
             if (_isClosing)
-            {
                 return;
-            }
 
-            // Check if dispatcher is shutting down - if so, just allow the close
-            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
-            {
+            if (_runningTask is not { IsCompleted: false })
                 return;
-            }
 
-            // Use semaphore to prevent concurrent closing attempts
-            var semaphoreAcquired = false;
+            e.Cancel = true;
+            _isClosing = true;
+
             try
             {
-                if (!await _closingSemaphore.WaitAsync(0))
+                await _cts.CancelAsync();
+                await _runningTask;
+            }
+            catch (Exception ex)
+            {
+                _isClosing = false;
+                _ = ReportBugAsync("Error during task cancellation while closing", ex);
+                return;
+            }
+
+            try
+            {
+                if (Application.Current?.Dispatcher is { HasShutdownStarted: false, HasShutdownFinished: false } dispatcher)
                 {
-                    e.Cancel = true;
-                    return;
-                }
-
-                semaphoreAcquired = true;
-                // If a job is in flight, cancel it and keep the window open
-                // until the task completes.
-                if (_runningTask is { IsCompleted: false })
-                {
-                    e.Cancel = true; // keep window alive
-                    _isClosing = true; // mark that we're in the closing process
-
-                    try
+                    _ = dispatcher.BeginInvoke(() =>
                     {
-                        await _cts.CancelAsync(); // ask workers to stop
-                        await _runningTask; // wait for graceful stop
-                    }
-                    catch (Exception ex)
-                    {
-                        _isClosing = false; // Reset flag on error so user can try closing again
-                        _ = ReportBugAsync("Error during task cancellation while closing", ex);
-                        return;
-                    }
-
-                    // Close the window on the dispatcher to avoid re-entrancy
-                    // Check dispatcher state again before invoking
-                    if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
-                    {
-                        try
-                        {
-                            await Dispatcher.BeginInvoke(() =>
-                            {
-                                if (!_disposed)
-                                {
-                                    Close();
-                                }
-                            }, System.Windows.Threading.DispatcherPriority.Normal);
-                        }
-                        catch (Exception ex)
-                        {
-                            _isClosing = false;
-                            _ = ReportBugAsync("Error during window closing (dispatcher invoke)", ex);
-                        }
-                    }
+                        if (!_disposed)
+                            Close();
+                    }, System.Windows.Threading.DispatcherPriority.Normal);
                 }
             }
             catch (Exception ex)
             {
                 _isClosing = false;
-                _ = ReportBugAsync("Error during window closing", ex);
-            }
-            finally
-            {
-                if (semaphoreAcquired)
-                {
-                    _closingSemaphore.Release();
-                }
+                _ = ReportBugAsync("Error during window re-close after task completion", ex);
             }
         }
         catch (Exception ex)
         {
-            _ = ReportBugAsync("Error during window closing", ex);
+            _isClosing = false;
+            _ = ReportBugAsync("Error during window re-close after task completion", ex);
         }
     }
 
@@ -281,38 +238,31 @@ public partial class MainWindow : IDisposable
 
         var timestampedMessage = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
 
-        Application.Current.Dispatcher.BeginInvoke(() =>
+        try
         {
-            if (_disposed)
+            Application.Current.Dispatcher.BeginInvoke(() =>
             {
-                return;
-            }
-
-            LogViewer.AppendText($"{timestampedMessage}{Environment.NewLine}");
-
-            // Trim log to prevent unbounded memory growth
-            var lineCount = LogViewer.LineCount;
-            if (lineCount > MaxLogLines)
-            {
-                var linesToRemove = lineCount - MaxLogLines;
-                var text = LogViewer.Text;
-                var lineIndex = 0;
-                for (var i = 0; i < linesToRemove; i++)
+                if (_disposed)
                 {
-                    lineIndex = text.IndexOf('\n', lineIndex);
-                    if (lineIndex < 0) break;
-
-                    lineIndex++;
+                    return;
                 }
 
-                if (lineIndex > 0)
-                {
-                    LogViewer.Text = text[lineIndex..];
-                }
-            }
+                LogViewer.AppendText($"{timestampedMessage}{Environment.NewLine}");
 
-            LogViewer.ScrollToEnd();
-        });
+                // Clear log if it exceeds the limit to prevent UI freeze from large text operations
+                if (LogViewer.LineCount > MaxLogLines)
+                {
+                    LogViewer.Clear();
+                    LogViewer.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] --- Log cleared (exceeded {MaxLogLines} lines) ---{Environment.NewLine}");
+                }
+
+                LogViewer.ScrollToEnd();
+            });
+        }
+        catch
+        {
+            // Silently fail if the Dispatcher is shutting down
+        }
     }
 
     private void BrowseInputButton_Click(object sender, RoutedEventArgs e)
@@ -358,17 +308,27 @@ public partial class MainWindow : IDisposable
                 _ = int.TryParse(selectedItem.Content.ToString(), out _currentDegreeOfParallelismForFiles);
             }
 
-            if (string.IsNullOrEmpty(inputFolder))
+            var inputError = ValidateFolder(inputFolder, "input folder", true);
+            if (inputError != null)
             {
-                LogMessage("Error: No input folder selected.");
-                ShowError("Please select the input folder containing files to convert.");
+                LogMessage($"Error: {inputError}");
+                ShowError(inputError);
                 return;
             }
 
-            if (string.IsNullOrEmpty(outputFolder))
+            var outputError = ValidateFolder(outputFolder, "output folder", false);
+            if (outputError != null)
             {
-                LogMessage("Error: No output folder selected.");
-                ShowError("Please select the output folder where RVZ files will be saved.");
+                LogMessage($"Error: {outputError}");
+                ShowError(outputError);
+                return;
+            }
+
+            if (AreSameFolder(inputFolder, outputFolder))
+            {
+                const string msg = "The input and output folders must be different directories.";
+                LogMessage($"Error: {msg}");
+                ShowError(msg);
                 return;
             }
 
@@ -444,8 +404,8 @@ public partial class MainWindow : IDisposable
         _cts.Cancel();
         LogMessage("Cancellation requested. Waiting for current operation(s) to complete...");
 
-        // Only show the extraction overlay if an extraction is currently in progress
-        if (_isExtracting)
+        // Only show the extraction overlay if any extraction is currently in progress
+        if (_activeExtractionCount > 0)
         {
             ExtractionOverlayText.Text = "Cancellation requested.\nPlease wait for the current extraction to complete...";
             ExtractionOverlay.Visibility = Visibility.Visible;
@@ -456,36 +416,47 @@ public partial class MainWindow : IDisposable
     {
         // Use Invoke (synchronous) to ensure UI updates complete before returning.
         // This is important when called from background threads (e.g., Task.Run).
-        Dispatcher.Invoke(() =>
+        try
         {
-            MainTabControl.IsEnabled = enabled;
-
-            InputFolderTextBox.IsEnabled = enabled;
-            OutputFolderTextBox.IsEnabled = enabled;
-            BrowseInputButton.IsEnabled = enabled;
-            BrowseOutputButton.IsEnabled = enabled;
-            DeleteFilesCheckBox.IsEnabled = enabled;
-            ParallelProcessingCheckBox.IsEnabled = enabled;
-            StartConversionButton.IsEnabled = enabled;
-
-            VerifyFolderTextBox.IsEnabled = enabled;
-            BrowseVerifyFolderButton.IsEnabled = enabled;
-            MoveFailedCheckBox.IsEnabled = enabled;
-            MoveSuccessCheckBox.IsEnabled = enabled;
-            StartVerifyButton.IsEnabled = enabled;
-
-            CancelButton.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
-
-            if (enabled) // If controls are enabled (operation finished or not started)
+            Dispatcher.Invoke(() =>
             {
-                ClearProgressDisplay(); // Set to idle state
+                MainTabControl.IsEnabled = enabled;
 
-                // Hide the "Please wait" overlay if it was shown during cancellation
-                ExtractionOverlay.Visibility = Visibility.Collapsed;
-            }
+                InputFolderTextBox.IsEnabled = enabled;
+                OutputFolderTextBox.IsEnabled = enabled;
+                BrowseInputButton.IsEnabled = enabled;
+                BrowseOutputButton.IsEnabled = enabled;
+                DeleteFilesCheckBox.IsEnabled = enabled;
+                ParallelProcessingCheckBox.IsEnabled = enabled;
+                StartConversionButton.IsEnabled = enabled;
 
-            UpdateWriteSpeedDisplay(0);
-        });
+                VerifyFolderTextBox.IsEnabled = enabled;
+                BrowseVerifyFolderButton.IsEnabled = enabled;
+                MoveFailedCheckBox.IsEnabled = enabled;
+                MoveSuccessCheckBox.IsEnabled = enabled;
+                StartVerifyButton.IsEnabled = enabled;
+
+                CancelButton.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+
+                if (enabled) // If controls are enabled (operation finished or not started)
+                {
+                    ClearProgressDisplay(); // Set to idle state
+
+                    // Hide the "Please wait" overlay if it was shown during cancellation
+                    ExtractionOverlay.Visibility = Visibility.Collapsed;
+                }
+
+                UpdateWriteSpeedDisplay(0);
+            });
+        }
+        catch (TaskCanceledException)
+        {
+            // Expected during application shutdown
+        }
+        catch (InvalidOperationException)
+        {
+            // Dispatcher is shutting down
+        }
     }
 
     private static string? SelectFolder(string description)
@@ -495,6 +466,65 @@ public partial class MainWindow : IDisposable
             Title = description
         };
         return dialog.ShowDialog() == true ? dialog.FolderName : null;
+    }
+
+    /// <summary>
+    /// Validates a folder path for basic correctness and accessibility.
+    /// Returns an error message if validation fails, or null if validation passes.
+    /// </summary>
+    private static string? ValidateFolder(string folderPath, string label, bool mustExist)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath))
+            return $"Please select the {label}.";
+
+        try
+        {
+            _ = Path.GetFullPath(folderPath);
+        }
+        catch (Exception)
+        {
+            return $"The {label} path is invalid: \"{folderPath}\"";
+        }
+
+        switch (mustExist)
+        {
+            case true when !Directory.Exists(folderPath):
+                return $"The {label} does not exist: \"{folderPath}\"";
+            case true:
+                try
+                {
+                    _ = Directory.EnumerateFiles(folderPath).Take(1).ToList();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return $"Access denied to the {label}: \"{folderPath}\"";
+                }
+                catch (IOException ex)
+                {
+                    return $"Cannot access the {label}: {ex.Message}";
+                }
+
+                break;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Validates that input and output folders are not the same directory.
+    /// </summary>
+    private static bool AreSameFolder(string path1, string path2)
+    {
+        try
+        {
+            var full1 = Path.GetFullPath(path1).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var full2 = Path.GetFullPath(path2).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.Equals(full1, full2, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task PerformBatchConversionAsync(string dolphinToolPath, string inputFolder, string outputFolder, bool deleteFiles, bool useParallelFileProcessing, int maxConcurrency)
@@ -512,9 +542,15 @@ public partial class MainWindow : IDisposable
             LogMessage($"Found {_totalFilesToProcess} files to process.");
             if (_totalFilesToProcess == 0)
             {
-                LogMessage("No supported files (.iso, .zip, .7z, .rar) found in the input folder.");
+                LogMessage($"No supported files ({SupportedInputExtensionsDisplay}) found in the input folder.");
                 return;
             }
+
+            Dispatcher.Invoke(() =>
+            {
+                ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
+                ProgressBar.Value = 0;
+            });
 
             var filesProcessedCount = 0;
 
@@ -522,7 +558,6 @@ public partial class MainWindow : IDisposable
             {
                 // Initialize aggregate speed tracking for parallel processing
                 Interlocked.Exchange(ref _aggregateTotalBytesWritten, 0);
-                Interlocked.Exchange(ref _aggregateLastTotalBytes, 0);
                 lock (_aggregateSpeedLock)
                 {
                     _aggregateLastCheckTime = DateTime.UtcNow;
@@ -644,7 +679,7 @@ public partial class MainWindow : IDisposable
                 {
                     LogMessage($"Error extracting archive {Path.GetFileName(inputFile)}: {extractResult.ErrorMessage}");
                     // Do not report this specific error as it's a user issue (archive content), not a bug.
-                    if (!extractResult.ErrorMessage.Contains("No supported game image"))
+                    if (!extractResult.ErrorMessage.Contains(NoSupportedGameImageMessage))
                     {
                         await ReportBugAsync($"Error extracting archive: {Path.GetFileName(inputFile)}", new InvalidOperationException(extractResult.ErrorMessage));
                     }
@@ -668,14 +703,14 @@ public partial class MainWindow : IDisposable
                     if (isArchiveFile)
                     {
                         // Wait for file handles to be released by OS/antivirus
-                        await Task.Delay(2000, cancellationToken);
-                        await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", cancellationToken);
+                        await Task.Delay(2000, CancellationToken.None);
+                        await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", CancellationToken.None);
                     }
                     else
                     {
                         // Wait for file handles to be released by OS/antivirus
-                        await Task.Delay(2000, cancellationToken);
-                        await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", cancellationToken);
+                        await Task.Delay(2000, CancellationToken.None);
+                        await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", CancellationToken.None);
                     }
                 }
 
@@ -689,14 +724,14 @@ public partial class MainWindow : IDisposable
             if (isArchiveFile)
             {
                 // Wait for file handles to be released by OS/antivirus
-                await Task.Delay(2000, cancellationToken);
-                await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", cancellationToken);
+                await Task.Delay(2000, CancellationToken.None);
+                await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", CancellationToken.None);
             }
             else
             {
                 // Wait for file handles to be released by OS/antivirus
-                await Task.Delay(2000, cancellationToken);
-                await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", cancellationToken);
+                await Task.Delay(2000, CancellationToken.None);
+                await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", CancellationToken.None);
             }
 
             return success;
@@ -707,24 +742,7 @@ public partial class MainWindow : IDisposable
 
             var potentialOutputFile = Path.Combine(outputFolder, GetBaseFileNameWithoutGameExtension(fileToProcess) + ".rvz");
 
-            if (File.Exists(potentialOutputFile))
-            {
-                // Wait a bit longer to ensure the file handle is released
-                for (var i = 0; i < 10; i++)
-                {
-                    try
-                    {
-                        File.Delete(potentialOutputFile);
-                        LogMessage($"Deleted partially created RVZ file after cancellation: {Path.GetFileName(potentialOutputFile)}");
-                        break;
-                    }
-                    catch (IOException)
-                    {
-                        // File is still locked, wait and retry
-                        await Task.Delay(300 * (i + 1), CancellationToken.None); // Exponential backoff - use None as token is already cancelled
-                    }
-                }
-            }
+            await TryDeleteFile(potentialOutputFile, "partially created RVZ file after cancellation", CancellationToken.None);
 
             throw;
         }
@@ -736,8 +754,8 @@ public partial class MainWindow : IDisposable
             if (File.Exists(potentialOutputFile))
             {
                 // Small delay before attempting deletion
-                await Task.Delay(100, cancellationToken);
-                await TryDeleteFile(potentialOutputFile, "partially created RVZ file after error", cancellationToken);
+                await Task.Delay(100, CancellationToken.None);
+                await TryDeleteFile(potentialOutputFile, "partially created RVZ file after error", CancellationToken.None);
             }
 
             return false;
@@ -936,24 +954,7 @@ public partial class MainWindow : IDisposable
                 }
             }
 
-            if (File.Exists(outputFile))
-            {
-                // Wait a bit longer to ensure file handle is released
-                for (var i = 0; i < 10; i++)
-                {
-                    try
-                    {
-                        File.Delete(outputFile);
-                        LogMessage($"Deleted partially created RVZ file after cancellation: {Path.GetFileName(outputFile)}");
-                        break;
-                    }
-                    catch (IOException)
-                    {
-                        // File is still locked, wait and retry
-                        await Task.Delay(300 * (i + 1), CancellationToken.None); // Exponential backoff - use None as token is already cancelled
-                    }
-                }
-            }
+            await TryDeleteFile(outputFile, "partially created RVZ file after cancellation", CancellationToken.None);
 
             throw;
         }
@@ -964,8 +965,8 @@ public partial class MainWindow : IDisposable
             if (File.Exists(outputFile))
             {
                 // Small delay before attempting deletion
-                await Task.Delay(100, cancellationToken);
-                await TryDeleteFile(outputFile, "partially created RVZ file after error", cancellationToken);
+                await Task.Delay(100, CancellationToken.None);
+                await TryDeleteFile(outputFile, "partially created RVZ file after error", CancellationToken.None);
             }
 
             return false;
@@ -989,119 +990,53 @@ public partial class MainWindow : IDisposable
         {
             if (!File.Exists(filePath)) return true;
 
-            // Try multiple times with increasing delays and different approaches
-            const int maxAttempts = 15; // Increased to 15 attempts
+            // Clear attributes once up front (handles read-only, hidden, etc.)
+            try
+            {
+                File.SetAttributes(filePath, FileAttributes.Normal);
+            }
+            catch
+            {
+                /* Best-effort; delete may still succeed */
+            }
+
+            const int maxAttempts = 5;
             for (var attempt = 0; attempt < maxAttempts; attempt++)
             {
                 try
                 {
-                    // Force garbage collection to release any lingering handles
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                    GC.Collect();
-
-                    // Try to clear all file attributes first
-                    try
-                    {
-                        File.SetAttributes(filePath, FileAttributes.Normal);
-                    }
-                    catch
-                    {
-                        // Ignore - will try again or handle during delete
-                    }
-
-                    // Check if file is locked by trying to open it exclusively
-                    var isLocked = false;
-                    try
-                    {
-                        await using (new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-                        {
-                            // If we can open it exclusively, we can delete it
-                        }
-                    }
-                    catch (IOException)
-                    {
-                        isLocked = true;
-                    }
-
-                    if (isLocked)
-                    {
-                        if (attempt < maxAttempts - 1)
-                        {
-                            // Exponential backoff: 500ms, 1000ms, 1500ms, up to 5000ms
-                            var delay = Math.Min(500 * (attempt + 1), 5000);
-                            LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/{maxAttempts}. Waiting {delay}ms...");
-                            await Task.Delay(delay, CancellationToken.None);
-                        }
-
-                        continue;
-                    }
-
-                    // Try to remove read-only attribute if it exists
-                    var attributes = File.GetAttributes(filePath);
-                    if ((attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
-                    {
-                        File.SetAttributes(filePath, attributes & ~FileAttributes.ReadOnly);
-                    }
-
-                    // Finally, try to delete the file
                     File.Delete(filePath);
                     LogMessage($"Deleted {description}: {Path.GetFileName(filePath)}");
                     return true;
                 }
-                catch (IOException ioEx) when ((ioEx.HResult & 0xFFFF) == 32 || // ERROR_SHARING_VIOLATION
-                                               (ioEx.HResult & 0xFFFF) == 33) // ERROR_LOCK_VIOLATION
+                catch (IOException) when (attempt < maxAttempts - 1)
                 {
-                    if (attempt < maxAttempts - 1)
-                    {
-                        // Exponential backoff: 500ms, 1000ms, 1500ms, up to 5000ms
-                        var delay = Math.Min(500 * (attempt + 1), 5000);
-                        LogMessage($"File {Path.GetFileName(filePath)} is still locked. Attempt {attempt + 1}/{maxAttempts}. Waiting {delay}ms...");
-                        await Task.Delay(delay, CancellationToken.None);
-                    }
-                    else
-                    {
-                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after {maxAttempts} attempts: {ioEx.Message}");
-                        _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)} after multiple attempts", ioEx), cancellationToken);
-                        return false;
-                    }
+                    // File is locked (sharing/lock violation) — retry with backoff
                 }
-                catch (UnauthorizedAccessException authEx)
+                catch (UnauthorizedAccessException) when (attempt < maxAttempts - 1)
                 {
-                    // Try to reset file attributes with multiple approaches
+                    // Re-attempt attribute clear in case it changed between retries
                     try
                     {
                         File.SetAttributes(filePath, FileAttributes.Normal);
                     }
                     catch
                     {
-                        // Ignore errors when trying to reset attributes
+                        // ignored
                     }
+                }
 
-                    if (attempt < maxAttempts - 1)
-                    {
-                        // Longer delays for access denied: 1000ms, 2000ms, up to 5000ms
-                        var delay = Math.Min(1000 * (attempt + 1), 5000);
-                        LogMessage($"Access denied for {Path.GetFileName(filePath)}. Attempt {attempt + 1}/{maxAttempts}. Waiting {delay}ms...");
-                        await Task.Delay(delay, CancellationToken.None);
-                    }
-                    else
-                    {
-                        LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after {maxAttempts} attempts due to access denied: {authEx.Message}");
-                        _ = Task.Run(() => ReportBugAsync($"Access denied when deleting {description}: {Path.GetFileName(filePath)} after multiple attempts", authEx), cancellationToken);
-                        return false;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)}: {ex.Message}");
-                    _ = Task.Run(() => ReportBugAsync($"Failed to delete {description}: {Path.GetFileName(filePath)}", ex), cancellationToken);
-                    return false; // Non-IO exceptions don't benefit from retry
-                }
+                var delay = Math.Min(500 * (attempt + 1), 5000);
+                LogMessage($"Cannot delete {Path.GetFileName(filePath)} yet (attempt {attempt + 1}/{maxAttempts}). Waiting {delay}ms...");
+                await Task.Delay(delay, cancellationToken);
             }
 
-            // If we exhausted all attempts without returning, deletion failed
+            LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after {maxAttempts} attempts.");
             return false;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -1140,14 +1075,28 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    private static string EnsureTrailingSeparator(string path)
+    {
+        if (path.Length > 0 && path[^1] != Path.DirectorySeparatorChar && path[^1] != Path.AltDirectorySeparatorChar)
+            return path + Path.DirectorySeparatorChar;
+
+        return path;
+    }
+
+    private static bool IsPathInsideDirectory(string candidatePath, string directoryFullPath)
+    {
+        var resolved = EnsureTrailingSeparator(Path.GetFullPath(candidatePath));
+        return resolved.StartsWith(directoryFullPath, StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractArchiveAsync(string archivePath, CancellationToken cancellationToken)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         var extension = Path.GetExtension(archivePath);
         var archiveFileName = Path.GetFileName(archivePath);
 
-        // Set the extraction flag to true at the start
-        _isExtracting = true;
+        // Increment the extraction counter (supports concurrent extractions in parallel mode)
+        Interlocked.Increment(ref _activeExtractionCount);
 
         try
         {
@@ -1161,125 +1110,93 @@ public partial class MainWindow : IDisposable
 
             LogMessage($"Extracting {archiveFileName} to temporary directory: {tempDir}");
 
-            switch (extension)
+            if (ArchiveExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
             {
-                case ".zip":
-                case ".7z":
-                case ".rar":
-                    // Wrap the synchronous extraction in a Task to avoid blocking the UI thread,
-                    // but ensure cancellation is handled correctly and resources are disposed.
-                    await Task.Run(() =>
+                await Task.Run(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    // Normalize temp directory path once for all ZipSlip checks.
+                    // Both paths must have trailing separators so StartsWith cannot
+                    // match "C:\temp\abc1234" against prefix "C:\temp\abc".
+                    var tempDirFullPath = EnsureTrailingSeparator(Path.GetFullPath(tempDir));
+
+                    // Try the standard Archive API first (Seekable)
+                    try
                     {
-                        // Check for cancellation before starting the potentially long-running operation
-                        cancellationToken.ThrowIfCancellationRequested();
-
-                        // Get full path of tempDir for ZipSlip vulnerability protection
-                        var tempDirFullPath = Path.GetFullPath(tempDir);
-                        if (!tempDirFullPath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                        using var archive = ArchiveFactory.OpenArchive(archivePath);
+                        foreach (var entry in archive.Entries.Where(static e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key)))
                         {
-                            tempDirFullPath += Path.DirectorySeparatorChar;
-                        }
+                            cancellationToken.ThrowIfCancellationRequested();
 
-                        // Try the standard Archive API first (Seekable)
-                        try
-                        {
-                            using var archive = ArchiveFactory.OpenArchive(archivePath);
-                            foreach (var entry in archive.Entries.Where(static e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key)))
+                            var entryKey = entry.Key;
+                            if (entryKey == null) continue;
+
+                            if (!PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(entryKey), StringComparer.OrdinalIgnoreCase))
+                                continue;
+
+                            var entryPath = Path.Combine(tempDir, entryKey);
+
+                            if (!IsPathInsideDirectory(entryPath, tempDirFullPath))
                             {
-                                cancellationToken.ThrowIfCancellationRequested();
-
-                                if (entry.Key != null)
-                                {
-                                    // Filter by extension before extracting to avoid wasting disk I/O on unwanted files
-                                    var entryExtension = Path.GetExtension(entry.Key);
-                                    if (!PrimaryTargetExtensionsInsideArchive.Contains(entryExtension, StringComparer.OrdinalIgnoreCase))
-                                    {
-                                        continue;
-                                    }
-
-                                    var entryPath = Path.Combine(tempDir, entry.Key);
-                                    var entryFullPath = Path.GetFullPath(entryPath);
-
-                                    // ZipSlip protection: ensure the entry path is within the temp directory
-                                    if (!entryFullPath.StartsWith(tempDirFullPath, StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        LogMessage($"Skipping potentially malicious archive entry with directory traversal: {entry.Key}");
-                                        continue;
-                                    }
-
-                                    var entryDir = Path.GetDirectoryName(entryPath);
-
-                                    if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
-                                    {
-                                        Directory.CreateDirectory(entryDir);
-                                    }
-
-                                    entry.WriteToFile(entryPath);
-                                }
+                                LogMessage($"Skipping potentially malicious archive entry with directory traversal: {entryKey}");
+                                continue;
                             }
-                        }
-                        catch (ArchiveException)
-                        {
-                            // FALLBACK: If the header at the end is missing,
-                            // try the Reader API (Streaming from the start)
-                            LogMessage($"Standard header not found. Trying streaming extraction for {archiveFileName}...");
 
-                            using Stream stream = File.OpenRead(archivePath);
-                            using var reader = ReaderFactory.OpenReader(stream, new ReaderOptions());
-                            while (reader.MoveToNextEntry())
+                            var entryDir = Path.GetDirectoryName(entryPath);
+                            if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
+                                Directory.CreateDirectory(entryDir);
+
+                            entry.WriteToFile(entryPath);
+                        }
+                    }
+                    catch (ArchiveException)
+                    {
+                        LogMessage($"Standard header not found. Trying streaming extraction for {archiveFileName}...");
+
+                        using Stream stream = File.OpenRead(archivePath);
+                        using var reader = ReaderFactory.OpenReader(stream, new ReaderOptions());
+                        while (reader.MoveToNextEntry())
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+
+                            if (reader.Entry.IsDirectory) continue;
+
+                            var entryKey = reader.Entry.Key;
+                            if (entryKey == null) continue;
+
+                            if (!PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(entryKey), StringComparer.OrdinalIgnoreCase))
+                                continue;
+
+                            var entryPath = Path.Combine(tempDir, entryKey);
+
+                            if (!IsPathInsideDirectory(entryPath, tempDirFullPath))
                             {
-                                cancellationToken.ThrowIfCancellationRequested();
-
-                                if (reader.Entry.IsDirectory) continue;
-
-                                // Filter by extension before extracting
-                                var ext = Path.GetExtension(reader.Entry.Key);
-                                if (!PrimaryTargetExtensionsInsideArchive.Contains(ext, StringComparer.OrdinalIgnoreCase))
-                                {
-                                    continue;
-                                }
-
-                                if (reader.Entry.Key != null)
-                                {
-                                    var entryPath = Path.Combine(tempDir, reader.Entry.Key);
-                                    var entryFullPath = Path.GetFullPath(entryPath);
-
-                                    // ZipSlip protection: ensure the entry path is within the temp directory
-                                    if (!entryFullPath.StartsWith(tempDirFullPath, StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        LogMessage($"Skipping potentially malicious archive entry with directory traversal: {reader.Entry.Key}");
-                                        continue;
-                                    }
-
-                                    var entryDir = Path.GetDirectoryName(entryPath);
-
-                                    if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
-                                    {
-                                        Directory.CreateDirectory(entryDir);
-                                    }
-
-                                    using var entryStream = reader.OpenEntryStream();
-                                    using var fileStream = File.Create(entryPath);
-                                    entryStream.CopyTo(fileStream);
-                                }
+                                LogMessage($"Skipping potentially malicious archive entry with directory traversal: {entryKey}");
+                                continue;
                             }
+
+                            var entryDir = Path.GetDirectoryName(entryPath);
+                            if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
+                                Directory.CreateDirectory(entryDir);
+
+                            using var entryStream = reader.OpenEntryStream();
+                            using var fileStream = File.Create(entryPath);
+                            entryStream.CopyTo(fileStream);
                         }
+                    }
 
-                        // Check again after the operation if it was lengthy
-                        if (cancellationToken.IsCancellationRequested)
-                        {
-                            LogMessage($"Extraction of {archiveFileName} completed, but cancellation was requested. Cleaning up.");
-                        }
+                    if (cancellationToken.IsCancellationRequested)
+                        LogMessage($"Extraction of {archiveFileName} completed, but cancellation was requested. Cleaning up.");
 
-                        cancellationToken.ThrowIfCancellationRequested();
-                    }, cancellationToken); // Passing the token here allows Task.Run to respond to cancellation
-                    // by throwing an OperationCanceledException, which is caught below.
-                    break;
-
-                default:
-                    // Clean up the temporary directory on unsupported archive type
-                    TryDeleteDirectory(tempDir, "unsupported archive type extraction directory");
-                    return (false, string.Empty, string.Empty, $"Unsupported archive type: {extension}");
+                    cancellationToken.ThrowIfCancellationRequested();
+                }, cancellationToken);
+            }
+            else
+            {
+                // Clean up the temporary directory on unsupported archive type
+                TryDeleteDirectory(tempDir, "unsupported archive type extraction directory");
+                return (false, string.Empty, string.Empty, $"Unsupported archive type: {extension}");
             }
 
             // After successful extraction (or if it wasn't cancelled during),
@@ -1294,7 +1211,7 @@ public partial class MainWindow : IDisposable
 
             // No supported game image found - clean up the temp directory to prevent disk leak
             TryDeleteDirectory(tempDir, "extraction directory with no supported game images");
-            return (false, string.Empty, string.Empty, "No supported game image (.iso, .gcm, .wbfs, .nkit.iso) found in archive.");
+            return (false, string.Empty, string.Empty, $"No supported game image ({PrimaryTargetExtensionsDisplay}) found in archive.");
         }
         catch (OperationCanceledException)
         {
@@ -1373,8 +1290,8 @@ public partial class MainWindow : IDisposable
         }
         finally
         {
-            // Reset the extraction flag when extraction completes (successfully or with error)
-            _isExtracting = false;
+            // Decrement the extraction counter when extraction completes (successfully or with error)
+            Interlocked.Decrement(ref _activeExtractionCount);
         }
     }
 
@@ -1485,7 +1402,7 @@ public partial class MainWindow : IDisposable
 
     private void ShowMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
     {
-        Application.Current.Dispatcher.Invoke(() => MessageBox.Show(this, message, title, buttons, icon));
+        MessageBox.Show(this, message, title, buttons, icon);
     }
 
     private void ShowError(string message)
@@ -1497,23 +1414,14 @@ public partial class MainWindow : IDisposable
     {
         try
         {
-            var fullReport = new StringBuilder();
-            fullReport.AppendLine("=== Bug Report ===");
-            fullReport.AppendLine("Application: BatchConvertToRVZ");
-            fullReport.AppendLine(CultureInfo.InvariantCulture, $"Version: {GetType().Assembly.GetName().Version}");
-            fullReport.AppendLine(CultureInfo.InvariantCulture, $"OS: {Environment.OSVersion}");
-            fullReport.AppendLine(CultureInfo.InvariantCulture, $".NET Version: {Environment.Version}");
-            fullReport.AppendLine(CultureInfo.InvariantCulture, $"Architecture: {RuntimeInformation.ProcessArchitecture}");
-            fullReport.AppendLine(CultureInfo.InvariantCulture, $"Date/Time: {DateTime.Now}");
-            fullReport.AppendLine();
-            fullReport.AppendLine("=== Error Message ===");
-            fullReport.AppendLine(message);
-            fullReport.AppendLine();
+            var report = new StringBuilder();
+            report.AppendLine(message);
 
             if (exception != null)
             {
-                fullReport.AppendLine("=== Exception Details ===");
-                AppendExceptionDetailsToReport(fullReport, exception);
+                report.AppendLine();
+                report.AppendLine("Exception Details:");
+                AppendExceptionDetailsToReport(report, exception);
             }
 
             if (LogViewer != null)
@@ -1522,11 +1430,11 @@ public partial class MainWindow : IDisposable
                 await Application.Current.Dispatcher.InvokeAsync(() => logContent = LogViewer.Text);
                 if (!string.IsNullOrEmpty(logContent))
                 {
-                    fullReport.AppendLine().AppendLine("=== Application Log ===").Append(logContent);
+                    report.AppendLine().AppendLine("=== Application Log ===").Append(logContent);
                 }
             }
 
-            if (App.BugReportServiceInstance != null) await App.BugReportServiceInstance.SendBugReportAsync(fullReport.ToString());
+            if (App.BugReportServiceInstance != null) await App.BugReportServiceInstance.SendBugReportAsync(report.ToString());
         }
         catch
         {
@@ -1654,12 +1562,23 @@ public partial class MainWindow : IDisposable
 
     private void ClearProgressDisplay()
     {
-        Dispatcher.Invoke(() =>
+        try
         {
-            ProgressBar.Value = 0; // Reset progress
-            ProgressBar.Maximum = 1; // Ensure the maximum is not zero when idle
-            ProgressText.Text = "Ready."; // Set a default idle message
-        });
+            Dispatcher.Invoke(() =>
+            {
+                ProgressBar.Value = 0; // Reset progress
+                ProgressBar.Maximum = 1; // Ensure the maximum is not zero when idle
+                ProgressText.Text = "Ready."; // Set a default idle message
+            });
+        }
+        catch (TaskCanceledException)
+        {
+            // Expected during application shutdown
+        }
+        catch (InvalidOperationException)
+        {
+            // Dispatcher is shutting down
+        }
     }
 
     public void Dispose()
@@ -1674,7 +1593,6 @@ public partial class MainWindow : IDisposable
         _cts.Cancel();
         _cts.Dispose();
         _updateService.Dispose();
-        _closingSemaphore.Dispose();
         _operationTimer.Stop();
         GC.SuppressFinalize(this);
     }
@@ -1711,10 +1629,11 @@ public partial class MainWindow : IDisposable
             _moveFailedFiles = MoveFailedCheckBox.IsChecked ?? false;
             _moveSuccessFiles = MoveSuccessCheckBox.IsChecked ?? false;
 
-            if (string.IsNullOrEmpty(verifyFolder))
+            var verifyError = ValidateFolder(verifyFolder, "verification folder", true);
+            if (verifyError != null)
             {
-                LogMessage("Error: No verification folder selected.");
-                ShowError("Please select the folder containing RVZ files to verify.");
+                LogMessage($"Error: {verifyError}");
+                ShowError(verifyError);
                 return;
             }
 
@@ -1783,9 +1702,15 @@ public partial class MainWindow : IDisposable
             LogMessage($"Found {_totalFilesToProcess} RVZ files to verify.");
             if (_totalFilesToProcess == 0)
             {
-                LogMessage("No RVZ files (.rvz) found in the selected folder.");
+                LogMessage($"No RVZ files ({RvzExtensionDisplay}) found in the selected folder.");
                 return;
             }
+
+            Dispatcher.Invoke(() =>
+            {
+                ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
+                ProgressBar.Value = 0;
+            });
 
             var filesProcessedCount = 0;
 
@@ -2001,7 +1926,6 @@ public partial class MainWindow : IDisposable
         _operationTimer.Reset();
         // Reset aggregate speed tracking fields
         Interlocked.Exchange(ref _aggregateTotalBytesWritten, 0);
-        Interlocked.Exchange(ref _aggregateLastTotalBytes, 0);
         Interlocked.Exchange(ref _activeConversionCount, 0);
         lock (_aggregateSpeedLock)
         {
@@ -2016,29 +1940,62 @@ public partial class MainWindow : IDisposable
 
     private void UpdateStatsDisplay()
     {
-        Dispatcher.Invoke(() =>
+        try
         {
-            TotalFilesValue.Text = _totalFilesToProcess.ToString(CultureInfo.InvariantCulture);
-            SuccessValue.Text = _successCount.ToString(CultureInfo.InvariantCulture);
-            FailedValue.Text = _failureCount.ToString(CultureInfo.InvariantCulture);
-        });
+            Dispatcher.Invoke(() =>
+            {
+                TotalFilesValue.Text = _totalFilesToProcess.ToString(CultureInfo.InvariantCulture);
+                SuccessValue.Text = _successCount.ToString(CultureInfo.InvariantCulture);
+                FailedValue.Text = _failureCount.ToString(CultureInfo.InvariantCulture);
+            });
+        }
+        catch (TaskCanceledException)
+        {
+            // Expected during application shutdown
+        }
+        catch (InvalidOperationException)
+        {
+            // Dispatcher is shutting down
+        }
     }
 
     private void UpdateProcessingTimeDisplay()
     {
         var elapsed = _operationTimer.Elapsed;
-        Dispatcher.Invoke(() =>
+        try
         {
-            ProcessingTimeValue.Text = $"{(int)elapsed.TotalHours:D2}:{elapsed:mm\\:ss}";
-        });
+            Dispatcher.Invoke(() =>
+            {
+                ProcessingTimeValue.Text = $"{(int)elapsed.TotalHours:D2}:{elapsed:mm\\:ss}";
+            });
+        }
+        catch (TaskCanceledException)
+        {
+            // Expected during application shutdown
+        }
+        catch (InvalidOperationException)
+        {
+            // Dispatcher is shutting down
+        }
     }
 
     private void UpdateWriteSpeedDisplay(double speedInMBps)
     {
-        Dispatcher.Invoke(() =>
+        try
         {
-            WriteSpeedValue.Text = $"{speedInMBps:F1} MB/s";
-        });
+            Dispatcher.Invoke(() =>
+            {
+                WriteSpeedValue.Text = $"{speedInMBps:F1} MB/s";
+            });
+        }
+        catch (TaskCanceledException)
+        {
+            // Expected during application shutdown
+        }
+        catch (InvalidOperationException)
+        {
+            // Dispatcher is shutting down
+        }
     }
 
     /// <summary>
@@ -2053,10 +2010,10 @@ public partial class MainWindow : IDisposable
             {
                 await Task.Delay(WriteSpeedUpdateIntervalMs, cancellationToken);
 
-                // Only update if there are active conversions
                 if (Interlocked.CompareExchange(ref _activeConversionCount, 0, 0) == 0)
                     continue;
 
+                double speedInMBps;
                 lock (_aggregateSpeedLock)
                 {
                     var currentTime = DateTime.UtcNow;
@@ -2064,16 +2021,20 @@ public partial class MainWindow : IDisposable
 
                     if (timeDelta.TotalSeconds > 0)
                     {
-                        var currentTotalBytes = Interlocked.Read(ref _aggregateTotalBytesWritten);
-                        var bytesDelta = currentTotalBytes - Interlocked.Read(ref _aggregateLastTotalBytes);
-                        var speedInMBps = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
-
-                        UpdateWriteSpeedDisplay(speedInMBps);
-
-                        Interlocked.Exchange(ref _aggregateLastTotalBytes, currentTotalBytes);
+                        // Interlocked.Exchange atomically reads and resets the counter,
+                        // so concurrent Interlocked.Add calls from conversion threads
+                        // cannot cause lost updates or torn reads.
+                        var bytesThisInterval = Interlocked.Exchange(ref _aggregateTotalBytesWritten, 0);
+                        speedInMBps = (bytesThisInterval / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
                         _aggregateLastCheckTime = currentTime;
                     }
+                    else
+                    {
+                        speedInMBps = 0;
+                    }
                 }
+
+                UpdateWriteSpeedDisplay(Math.Max(0, speedInMBps));
             }
         }
         catch (OperationCanceledException)
@@ -2088,13 +2049,23 @@ public partial class MainWindow : IDisposable
 
     private void UpdateProgressDisplay(int current, int total, string currentFileName, string operationVerb)
     {
-        Dispatcher.Invoke(() =>
+        try
         {
-            var percentage = total == 0 ? 0 : (double)current / total * 100;
-            ProgressText.Text = $"{operationVerb} file {current} of {total}: {currentFileName} ({percentage:F1}%)";
-            ProgressBar.Value = current;
-            ProgressBar.Maximum = Math.Max(total, 1);
-        });
+            Dispatcher.Invoke(() =>
+            {
+                var percentage = total == 0 ? 0 : (double)current / total * 100;
+                ProgressText.Text = $"{operationVerb} file {current} of {total}: {currentFileName} ({percentage:F1}%)";
+                ProgressBar.Value = current;
+            });
+        }
+        catch (TaskCanceledException)
+        {
+            // Expected during application shutdown
+        }
+        catch (InvalidOperationException)
+        {
+            // Dispatcher is shutting down
+        }
     }
 
     private void LogOperationSummary(string operationVerb, string operationNoun)
@@ -2200,7 +2171,7 @@ public partial class MainWindow : IDisposable
         var fileName = Path.GetFileName(filePath);
 
         // Handle compound extension .nkit.iso first
-        if (fileName.EndsWith(".nkit.iso", StringComparison.OrdinalIgnoreCase))
+        if (fileName.EndsWith(PrimaryTargetExtensionsInsideArchive[^1], StringComparison.OrdinalIgnoreCase))
         {
             return Path.GetFileNameWithoutExtension(fileName[..^4]); // Remove .iso first, then .nkit
         }
