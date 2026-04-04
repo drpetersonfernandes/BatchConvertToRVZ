@@ -113,8 +113,25 @@ public partial class App
 
     private void App_DispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        ReportException(e.Exception, "Application.DispatcherUnhandledException");
-        e.Handled = true;
+        var ex = e.Exception;
+        ReportException(ex, "Application.DispatcherUnhandledException");
+
+        // For critical exceptions, let the app crash rather than running in a corrupted state.
+        // IO and standard OperationCanceled are usually safe to "handle" if they bubbled up to here.
+        if (ex is IOException or TaskCanceledException or OperationCanceledException or UnauthorizedAccessException)
+        {
+            MessageBox.Show($"An unexpected but recoverable error occurred: {ex.Message}\n\nThe application will continue to run, but the current operation may have failed.",
+                "Recoverable Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            e.Handled = true;
+        }
+        else
+        {
+            // For other unknown/severe exceptions, show a final error message and let it crash to prevent data corruption
+            MessageBox.Show($"A fatal error occurred and the application must close: {ex.Message}\n\nA bug report has been sent.",
+                "Fatal Error", MessageBoxButton.OK, MessageBoxImage.Error);
+
+            // We DON'T set e.Handled = true here, allowing the app to terminate
+        }
     }
 
     private void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)

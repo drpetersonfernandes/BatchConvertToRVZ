@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="About Batch Convert to RVZ"
         Width="600"
-        Height="650"
+        Height="700"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource WindowBackgroundBrush}">
@@ -61,7 +61,7 @@
                 <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
                     <Run Text="• Uses " />
                     <Hyperlink NavigateUri="https://github.com/adamhathcock/sharpcompress" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{StaticResource PrimaryAccentBrush}" FontWeight="Bold" TextDecorations="None" ToolTip="Open SharpCompress GitHub repository">SharpCompress</Hyperlink>
-                    <Run Text=" for .7z and .rar archive extraction." />
+                    <Run Text=" for .zip, .7z and .rar archive extraction." />
                 </TextBlock>
             </StackPanel>
         </Border>

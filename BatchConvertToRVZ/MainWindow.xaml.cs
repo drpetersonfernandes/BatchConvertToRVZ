@@ -60,8 +60,6 @@ public partial class MainWindow : IDisposable
     private static readonly string PrimaryTargetExtensionsDisplay = string.Join(", ", PrimaryTargetExtensionsInsideArchive);
     private static readonly string RvzExtensionDisplay = string.Join(", ", RvzExtension);
 
-    private const string NoSupportedGameImageMessage = "No supported game image";
-
     // Statistics
     private int _totalFilesToProcess;
     private int _successCount;
@@ -84,11 +82,17 @@ public partial class MainWindow : IDisposable
     // Counter to track active extractions (supports concurrent extractions in parallel mode)
     private int _activeExtractionCount;
 
+    // Log batching
+    private readonly System.Threading.Channels.Channel<string> _logChannel = System.Threading.Channels.Channel.CreateUnbounded<string>();
+    private readonly Task? _logProcessorTask;
 
     public MainWindow()
     {
         InitializeComponent();
         _cts = new CancellationTokenSource();
+
+        // Start log processor
+        _logProcessorTask = Task.Run(ProcessLogsAsync);
 
         // The BugReportService is now initialized and managed by the App class.
         _updateService = new services.UpdateService(GitHubApiUrl);
@@ -186,7 +190,12 @@ public partial class MainWindow : IDisposable
                 return;
 
             if (_runningTask is not { IsCompleted: false })
+            {
+                // Ensure log processor is shut down
+                _logChannel.Writer.Complete();
+                if (_logProcessorTask != null) await _logProcessorTask;
                 return;
+            }
 
             e.Cancel = true;
             _isClosing = true;
@@ -194,14 +203,26 @@ public partial class MainWindow : IDisposable
             try
             {
                 await _cts.CancelAsync();
-                await _runningTask;
+
+                // Wait for the task to complete with a timeout to prevent hanging the app on exit
+                var timeoutTask = Task.Delay(5000); // 5 seconds timeout
+                var completedTask = await Task.WhenAny(_runningTask, timeoutTask);
+
+                if (completedTask == timeoutTask)
+                {
+                    LogMessage("Warning: Tasks did not cancel within the timeout period. Forcing exit.");
+                }
             }
             catch (Exception ex)
             {
                 _isClosing = false;
                 _ = ReportBugAsync("Error during task cancellation while closing", ex);
-                return;
+                // Even on error, we should try to close if we can't cancel
             }
+
+            // Complete the log channel and wait for processor to finish
+            _logChannel.Writer.Complete();
+            if (_logProcessorTask != null) await Task.WhenAny(_logProcessorTask, Task.Delay(1000));
 
             try
             {
@@ -231,37 +252,62 @@ public partial class MainWindow : IDisposable
 
     private void LogMessage(string message)
     {
-        if (_disposed || Application.Current is null)
-        {
-            return;
-        }
+        if (_disposed) return;
 
-        var timestampedMessage = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
+        _logChannel.Writer.TryWrite($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+    }
 
-        try
+    private async Task ProcessLogsAsync()
+    {
+        var batch = new List<string>();
+        while (await _logChannel.Reader.WaitToReadAsync())
         {
-            Application.Current.Dispatcher.BeginInvoke(() =>
+            while (_logChannel.Reader.TryRead(out var log))
             {
-                if (_disposed)
+                batch.Add(log);
+                if (batch.Count >= 50) break; // Process in batches of 50
+            }
+
+            if (batch.Count > 0)
+            {
+                var combinedLogs = string.Join(Environment.NewLine, batch) + Environment.NewLine;
+                batch.Clear();
+
+                try
                 {
-                    return;
+                    if (Application.Current is null) return;
+
+                    await Application.Current.Dispatcher.InvokeAsync(() =>
+                    {
+                        if (_disposed) return;
+
+                        LogViewer.AppendText(combinedLogs);
+
+                        // Clear log if it exceeds the limit to prevent UI freeze from large text operations
+                        if (LogViewer.LineCount > MaxLogLines)
+                        {
+                            var text = LogViewer.Text;
+                            var lines = text.Split(Environment.NewLine);
+                            if (lines.Length > MaxLogLines)
+                            {
+                                // Keep only the last 1000 lines instead of clearing everything
+                                var keptLines = lines.Skip(lines.Length - 1000).ToArray();
+                                LogViewer.Text = string.Join(Environment.NewLine, keptLines) + Environment.NewLine;
+                                LogViewer.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] --- Log truncated (kept last 1000 lines) ---{Environment.NewLine}");
+                            }
+                        }
+
+                        LogViewer.ScrollToEnd();
+                    }, System.Windows.Threading.DispatcherPriority.Background);
                 }
-
-                LogViewer.AppendText($"{timestampedMessage}{Environment.NewLine}");
-
-                // Clear log if it exceeds the limit to prevent UI freeze from large text operations
-                if (LogViewer.LineCount > MaxLogLines)
+                catch
                 {
-                    LogViewer.Clear();
-                    LogViewer.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] --- Log cleared (exceeded {MaxLogLines} lines) ---{Environment.NewLine}");
+                    // Silently fail if the Dispatcher is shutting down
                 }
+            }
 
-                LogViewer.ScrollToEnd();
-            });
-        }
-        catch
-        {
-            // Silently fail if the Dispatcher is shutting down
+            // Small delay to allow batching more logs if they are arriving rapidly
+            await Task.Delay(100);
         }
     }
 
@@ -627,12 +673,12 @@ public partial class MainWindow : IDisposable
 
                     if (success)
                     {
-                        _successCount++;
+                        Interlocked.Increment(ref _successCount);
                         LogMessage($"Conversion successful: {fileName}");
                     }
                     else
                     {
-                        _failureCount++;
+                        Interlocked.Increment(ref _failureCount);
                         LogMessage($"Conversion failed: {fileName}");
                     }
 
@@ -678,12 +724,8 @@ public partial class MainWindow : IDisposable
                 else
                 {
                     LogMessage($"Error extracting archive {Path.GetFileName(inputFile)}: {extractResult.ErrorMessage}");
-                    // Do not report this specific error as it's a user issue (archive content), not a bug.
-                    if (!extractResult.ErrorMessage.Contains(NoSupportedGameImageMessage))
-                    {
-                        await ReportBugAsync($"Error extracting archive: {Path.GetFileName(inputFile)}", new InvalidOperationException(extractResult.ErrorMessage));
-                    }
-
+                    // No need to report a bug here, as ExtractArchiveAsync handles bug reporting
+                    // for unexpected system errors, while user/archive errors are just logged.
                     return false;
                 }
             }
@@ -1000,7 +1042,7 @@ public partial class MainWindow : IDisposable
                 /* Best-effort; delete may still succeed */
             }
 
-            const int maxAttempts = 5;
+            const int maxAttempts = 10;
             for (var attempt = 0; attempt < maxAttempts; attempt++)
             {
                 try
@@ -1009,24 +1051,47 @@ public partial class MainWindow : IDisposable
                     LogMessage($"Deleted {description}: {Path.GetFileName(filePath)}");
                     return true;
                 }
-                catch (IOException) when (attempt < maxAttempts - 1)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < maxAttempts - 1)
                 {
-                    // File is locked (sharing/lock violation) — retry with backoff
-                }
-                catch (UnauthorizedAccessException) when (attempt < maxAttempts - 1)
-                {
-                    // Re-attempt attribute clear in case it changed between retries
-                    try
+                    // File might be locked or have temporary access issues (e.g. antivirus scanning)
+
+                    // If we've tried several times, try to force a GC to close any potentially abandoned handles
+                    // from our own process that might still be hanging onto the file.
+                    if (attempt >= 7)
                     {
-                        File.SetAttributes(filePath, FileAttributes.Normal);
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
                     }
-                    catch
+
+                    if (ex is UnauthorizedAccessException)
                     {
-                        // ignored
+                        // Re-attempt attribute clear in case it changed between retries
+                        try
+                        {
+                            File.SetAttributes(filePath, FileAttributes.Normal);
+                        }
+                        catch
+                        {
+                            // ignored
+                        }
                     }
                 }
 
-                var delay = Math.Min(500 * (attempt + 1), 5000);
+                // Exponential backoff: 250ms, 500ms, 750ms, 1000ms, 1500ms, 2000ms, 2500ms, 3000ms, 4000ms, 5000ms
+                var delay = attempt switch
+                {
+                    0 => 250,
+                    1 => 500,
+                    2 => 750,
+                    3 => 1000,
+                    4 => 1500,
+                    5 => 2000,
+                    6 => 2500,
+                    7 => 3000,
+                    8 => 4000,
+                    _ => 5000
+                };
+
                 LogMessage($"Cannot delete {Path.GetFileName(filePath)} yet (attempt {attempt + 1}/{maxAttempts}). Waiting {delay}ms...");
                 await Task.Delay(delay, cancellationToken);
             }
@@ -1224,10 +1289,26 @@ public partial class MainWindow : IDisposable
             // Re-throw to indicate the operation was cancelled
             throw;
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("archive") || ex.Message.Contains("password") || ex.Message.Contains("encrypted"))
+        catch (InvalidOperationException ex) when (ex.Message.Contains("archive", StringComparison.OrdinalIgnoreCase) ||
+                                                   ex.Message.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+                                                   ex.Message.Contains("encrypted", StringComparison.OrdinalIgnoreCase) ||
+                                                   ex.Message.Contains("determine", StringComparison.OrdinalIgnoreCase) ||
+                                                   ex.Message.Contains("stream type", StringComparison.OrdinalIgnoreCase))
         {
-            // Handle specific archive errors (corrupt, encrypted, etc.) without sending a bug report.
+            // Handle specific archive errors (corrupt, encrypted, unknown format, etc.) without sending a bug report.
             var errorMessage = $"Failed to extract archive {archiveFileName}. It may be corrupt, encrypted, or an unsupported format. Error: {ex.Message}";
+            LogMessage(errorMessage);
+
+            // Clean up the temporary directory on failure
+            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+
+            // Return a failure result with the detailed error message
+            return (false, string.Empty, string.Empty, errorMessage);
+        }
+        catch (CryptographicException ex)
+        {
+            // Handle encrypted archives without sending a bug report.
+            var errorMessage = $"Failed to extract archive {archiveFileName}. The archive is encrypted (requires a password), which is not currently supported. Error: {ex.Message}";
             LogMessage(errorMessage);
 
             // Clean up the temporary directory on failure
@@ -1359,7 +1440,6 @@ public partial class MainWindow : IDisposable
                     else
                     {
                         // Comma is a decimal separator, replace with period
-                        return numberStr.Replace(',', '.');
                     }
                 }
 
@@ -1745,11 +1825,11 @@ public partial class MainWindow : IDisposable
                     var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, verifyFolder, moveFailed, moveSuccess, _cts.Token);
                     if (success)
                     {
-                        _successCount++;
+                        Interlocked.Increment(ref _successCount);
                     }
                     else
                     {
-                        _failureCount++;
+                        Interlocked.Increment(ref _failureCount);
                     }
 
                     var processed = ++filesProcessedCount;
