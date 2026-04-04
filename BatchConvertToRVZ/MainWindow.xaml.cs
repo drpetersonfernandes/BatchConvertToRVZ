@@ -44,13 +44,13 @@ public partial class MainWindow : IDisposable
         { "lz4", (1, 12) }
     };
 
-    // Supported input extensions (Updated to include archives)
-    private static readonly string[] AllSupportedInputExtensions = [".iso", ".zip", ".7z", ".rar"];
+    // Supported input extensions (Updated to include all disc images)
+    private static readonly string[] AllSupportedInputExtensions = [".iso", ".gcm", ".wbfs", ".rvz", ".zip", ".7z", ".rar"];
 
     private static readonly string[] ArchiveExtensions = [".zip", ".7z", ".rar"];
 
     // Primary target extensions inside archives for RVZ conversion
-    private static readonly string[] PrimaryTargetExtensionsInsideArchive = [".iso", ".gcm", ".wbfs", ".nkit.iso"];
+    private static readonly string[] PrimaryTargetExtensionsInsideArchive = [".iso", ".gcm", ".wbfs", ".rvz", ".nkit.iso"];
 
     // Supported extension for verification
     private static readonly string[] RvzExtension = [".rvz"];
@@ -99,8 +99,8 @@ public partial class MainWindow : IDisposable
 
         LogMessage("Welcome to the Batch Convert to RVZ.");
         LogMessage("");
-        LogMessage("This program will convert GameCube/Wii ISO files (.iso) to RVZ format.");
-        LogMessage("It also supports extracting ISOs from ZIP, 7Z, and RAR archives.");
+        LogMessage("This program will convert GameCube/Wii disc images (.iso, .gcm, .wbfs, .nkit.iso, .rvz) to RVZ format.");
+        LogMessage("It also supports extracting game images from ZIP, 7Z, and RAR archives.");
         LogMessage("");
         LogMessage("Use the 'Convert' tab to convert ISO files or archives to RVZ.");
         LogMessage("Use the 'Verify Integrity' tab to check your existing RVZ files.");
