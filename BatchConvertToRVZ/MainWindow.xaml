@@ -87,7 +87,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Label Content="Output Folder:" ToolTip="Select where the converted RVZ files will be saved" />
-                                <TextBox x:Name="OutputFolderTextBox" Grid.Column="1" Margin="5,0" IsReadOnly="True" ToolTip="The destination folder for converted RVZ files. If not set, files will be saved in the input folder" />
+                                <TextBox x:Name="OutputFolderTextBox" Grid.Column="1" Margin="5,0" IsReadOnly="True" ToolTip="The destination folder for converted RVZ files. This must be different from the input folder." />
                                 <Button x:Name="BrowseOutputButton" Grid.Column="2" Content="Browse..." Click="BrowseOutputButton_Click" Style="{StaticResource ActionButtonStyle}" ToolTip="Browse for the output folder where converted files will be saved" />
                             </Grid>
 

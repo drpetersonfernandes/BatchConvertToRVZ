@@ -8,8 +8,8 @@
         <UseWPF>true</UseWPF>
         <ApplicationIcon>icon\icon.ico</ApplicationIcon>
         <SupportedOSPlatformVersion>7.0</SupportedOSPlatformVersion>
-        <AssemblyVersion>1.9.0</AssemblyVersion>
-        <FileVersion>1.9.0</FileVersion>
+        <AssemblyVersion>1.10.0</AssemblyVersion>
+        <FileVersion>1.10.0</FileVersion>
         <IsPackable>false</IsPackable>
         <NeutralLanguage>en-US</NeutralLanguage>
         <AssemblyName>BatchConvertToRVZ</AssemblyName>
@@ -36,7 +36,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="SharpCompress" Version="0.47.3" />
+        <PackageReference Include="SharpCompress" Version="0.47.4" />
     </ItemGroup>
 
     <ItemGroup>

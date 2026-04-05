@@ -443,35 +443,38 @@ public partial class MainWindow : IDisposable
             LogMessage($"RVZ Compression: Method={_rvzCompressionMethod}, Level={_rvzCompressionLevel}, Block Size={_rvzBlockSize}");
 
             // Wrap the whole job in a task that we can await on exit
-            _runningTask = Task.Run(async () =>
+            try
             {
-                try
+                _runningTask = Task.Run(async () =>
                 {
-                    await PerformBatchConversionAsync(_dolphinToolPath, inputFolder,
-                        outputFolder, deleteFiles,
-                        useParallelFileProcessing,
-                        _currentDegreeOfParallelismForFiles);
-                }
-                catch (OperationCanceledException)
-                {
-                    LogMessage("Conversion cancelled by user.");
-                }
-                catch (Exception ex)
-                {
-                    LogMessage($"Fatal conversion error: {ex.Message}");
-                    await ReportBugAsync("Unhandled exception in conversion", ex);
-                }
-                finally
-                {
-                    _operationTimer.Stop();
-                    UpdateProcessingTimeDisplay();
-                    UpdateWriteSpeedDisplay(0);
-                    SetControlsState(true);
-                    LogOperationSummary("convert", "Conversion");
-                }
-            });
+                    try
+                    {
+                        await PerformBatchConversionAsync(_dolphinToolPath, inputFolder,
+                            outputFolder, deleteFiles,
+                            useParallelFileProcessing,
+                            _currentDegreeOfParallelismForFiles);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        LogMessage("Conversion cancelled by user.");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"Fatal conversion error: {ex.Message}");
+                        await ReportBugAsync("Unhandled exception in conversion", ex);
+                    }
+                });
 
-            await _runningTask; // keep the UI responsive while running
+                await _runningTask; // keep the UI responsive while running
+            }
+            finally
+            {
+                _operationTimer.Stop();
+                UpdateProcessingTimeDisplay();
+                UpdateWriteSpeedDisplay(0);
+                SetControlsState(true);
+                LogOperationSummary("convert", "Conversion");
+            }
         }
         catch (Exception ex)
         {
@@ -671,6 +674,10 @@ public partial class MainWindow : IDisposable
                         LogMessage($"[Parallel] Failed: {fileName}");
                     }
 
+                    // Remove from active progress AFTER incrementing counters to avoid progress bar jumping backwards
+                    _activeFileProgress.TryRemove(inputFile, out _);
+                    UpdateOverallProgress();
+
                     var processed = Interlocked.Increment(ref filesProcessedCount);
                     UpdateProgressDisplay(processed, _totalFilesToProcess, fileName, "Converting");
                     UpdateStatsDisplay();
@@ -715,6 +722,10 @@ public partial class MainWindow : IDisposable
                         Interlocked.Increment(ref _failureCount);
                         LogMessage($"Conversion failed: {fileName}");
                     }
+
+                    // Remove from active progress AFTER incrementing counters to avoid progress bar jumping backwards
+                    _activeFileProgress.TryRemove(t, out _);
+                    UpdateOverallProgress();
 
                     var processed = ++filesProcessedCount;
                     UpdateProgressDisplay(processed, _totalFilesToProcess, fileName, "Converting");
@@ -857,17 +868,28 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Converting '{Path.GetFileName(inputFile)}' to '{Path.GetFileName(outputFile)}'...");
 
-            var arguments = $"convert -i \"{inputFile}\" -o \"{outputFile}\" -f rvz -c {_rvzCompressionMethod} -l {_rvzCompressionLevel} -b {_rvzBlockSize}";
-
             process.StartInfo = new ProcessStartInfo
             {
                 FileName = dolphinToolPath,
-                Arguments = arguments,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            process.StartInfo.ArgumentList.Add("convert");
+            process.StartInfo.ArgumentList.Add("-i");
+            process.StartInfo.ArgumentList.Add(inputFile);
+            process.StartInfo.ArgumentList.Add("-o");
+            process.StartInfo.ArgumentList.Add(outputFile);
+            process.StartInfo.ArgumentList.Add("-f");
+            process.StartInfo.ArgumentList.Add("rvz");
+            process.StartInfo.ArgumentList.Add("-c");
+            process.StartInfo.ArgumentList.Add(_rvzCompressionMethod);
+            process.StartInfo.ArgumentList.Add("-l");
+            process.StartInfo.ArgumentList.Add(_rvzCompressionLevel.ToString(CultureInfo.InvariantCulture));
+            process.StartInfo.ArgumentList.Add("-b");
+            process.StartInfo.ArgumentList.Add(_rvzBlockSize.ToString(CultureInfo.InvariantCulture));
+
             process.EnableRaisingEvents = true;
 
             var outputBuilder = new StringBuilder();
@@ -1049,10 +1071,6 @@ public partial class MainWindow : IDisposable
         }
         finally
         {
-            // Remove this file from active progress tracking
-            _activeFileProgress.TryRemove(inputFile, out _);
-            UpdateOverallProgress();
-
             // Decrement active conversion count
             Interlocked.Decrement(ref _activeConversionCount);
             // Only reset display if no more active conversions
@@ -1204,7 +1222,7 @@ public partial class MainWindow : IDisposable
 
             if (ArchiveExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
             {
-                await Task.Run(() =>
+                await Task.Run(async () =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
@@ -1224,7 +1242,11 @@ public partial class MainWindow : IDisposable
                             var entryKey = entry.Key;
                             if (entryKey == null) continue;
 
-                            if (!PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(entryKey), StringComparer.OrdinalIgnoreCase))
+                            // Trim leading slashes and backslashes to ensure Path.Combine works correctly
+                            // and doesn't treat the entry as an absolute path (prevents ZipSlip and extraction failures).
+                            entryKey = entryKey.TrimStart('/', '\\');
+
+                            if (!HasSupportedGameExtension(entryKey, PrimaryTargetExtensionsInsideArchive))
                                 continue;
 
                             var entryPath = Path.Combine(tempDir, entryKey);
@@ -1239,16 +1261,16 @@ public partial class MainWindow : IDisposable
                             if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
                                 Directory.CreateDirectory(entryDir);
 
-                            using var entryStream = entry.OpenEntryStream();
-                            using var fileStream = File.Create(entryPath);
-                            CopyStreamWithCancellationAsync(entryStream, fileStream, cancellationToken).GetAwaiter().GetResult();
+                            await using var entryStream = await entry.OpenEntryStreamAsync(cancellationToken);
+                            await using var fileStream = File.Create(entryPath);
+                            await CopyStreamWithCancellationAsync(entryStream, fileStream, cancellationToken);
                         }
                     }
                     catch (ArchiveException)
                     {
                         LogMessage($"Standard header not found. Trying streaming extraction for {archiveFileName}...");
 
-                        using Stream stream = File.OpenRead(archivePath);
+                        await using Stream stream = File.OpenRead(archivePath);
                         using var reader = ReaderFactory.OpenReader(stream, new ReaderOptions());
                         while (reader.MoveToNextEntry())
                         {
@@ -1259,7 +1281,7 @@ public partial class MainWindow : IDisposable
                             var entryKey = reader.Entry.Key;
                             if (entryKey == null) continue;
 
-                            if (!PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(entryKey), StringComparer.OrdinalIgnoreCase))
+                            if (!HasSupportedGameExtension(entryKey, PrimaryTargetExtensionsInsideArchive))
                                 continue;
 
                             var entryPath = Path.Combine(tempDir, entryKey);
@@ -1274,9 +1296,9 @@ public partial class MainWindow : IDisposable
                             if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
                                 Directory.CreateDirectory(entryDir);
 
-                            using var entryStream = reader.OpenEntryStream();
-                            using var fileStream = File.Create(entryPath);
-                            CopyStreamWithCancellationAsync(entryStream, fileStream, cancellationToken).GetAwaiter().GetResult();
+                            await using var entryStream = reader.OpenEntryStream();
+                            await using var fileStream = File.Create(entryPath);
+                            await CopyStreamWithCancellationAsync(entryStream, fileStream, cancellationToken);
                         }
                     }
 
@@ -1446,88 +1468,72 @@ public partial class MainWindow : IDisposable
 
     /// <summary>
     /// Removes thousand separators and normalizes decimal separator to period for invariant culture parsing.
-    /// Handles various locale formats like "1,000.5", "1.000,5", "1000.5", "1000,5".
+    /// Robustly handles various locale formats like "1,000.5", "1.000,5", "1000.5", "1000,5" by treating
+    /// the last non-digit character as the decimal separator.
     /// </summary>
     private static string RemoveThousandSeparators(string numberStr)
     {
         if (string.IsNullOrEmpty(numberStr))
             return numberStr;
 
-        // Count occurrences of comma and period
-        var commaCount = numberStr.Count(static c => c == ',');
-        var periodCount = numberStr.Count(static c => c == '.');
+        // Find the last occurrence of a potential decimal separator (comma or period)
+        var lastSeparatorIndex = numberStr.LastIndexOfAny([',', '.']);
 
-        // Determine which is the decimal separator based on position
-        // The last occurrence of either comma or period is typically the decimal separator
-        var lastCommaIndex = numberStr.LastIndexOf(',');
-        var lastPeriodIndex = numberStr.LastIndexOf('.');
-
-        switch (commaCount)
+        if (lastSeparatorIndex == -1)
         {
-            case 0 when periodCount == 0:
-                // No separators, return as-is
-                return numberStr;
-            case > 0 when periodCount == 0:
-            {
-                // Only commas - determine if decimal or thousand separator
-                // If comma is followed by exactly 3 digits at the end, it's likely a thousand separator
-                // Otherwise, treat as decimal separator
-                if (lastCommaIndex >= 0 && lastCommaIndex < numberStr.Length - 1)
-                {
-                    var digitsAfterComma = numberStr[(lastCommaIndex + 1)..];
-                    if (digitsAfterComma.Length == 3 && digitsAfterComma.All(char.IsDigit))
-                    {
-                        // Comma is a thousand separator, remove it
-                        return numberStr.Replace(",", "");
-                    }
-                    else
-                    {
-                        // Comma is a decimal separator, replace with period
-                    }
-                }
-
-                return numberStr.Replace(',', '.');
-            }
-        }
-
-        if (periodCount > 0 && commaCount == 0)
-        {
-            // Only periods - determine if decimal or thousand separator
-            if (lastPeriodIndex >= 0 && lastPeriodIndex < numberStr.Length - 1)
-            {
-                var digitsAfterPeriod = numberStr[(lastPeriodIndex + 1)..];
-                if (digitsAfterPeriod.Length == 3 && digitsAfterPeriod.All(char.IsDigit))
-                {
-                    // Period is a thousand separator, remove it
-                    return numberStr.Replace(".", "");
-                }
-                // Period is already a decimal separator, keep as-is
-            }
-
+            // No separators at all, just return the string (might contain only digits)
             return numberStr;
         }
 
-        // Both commas and periods present
-        // The rightmost one is the decimal separator
-        if (lastCommaIndex > lastPeriodIndex)
+        // The last separator found is very likely the decimal separator.
+        // We take everything before it and remove all non-digits (thousand separators).
+        var integerPart = numberStr[..lastSeparatorIndex];
+        var decimalPart = numberStr[(lastSeparatorIndex + 1)..];
+
+        // Strip all non-digits from the integer part (removes both dots and commas)
+        var sb = new StringBuilder();
+        foreach (var c in integerPart)
         {
-            // Comma is the decimal separator
-            // Remove periods (thousand separators) and replace comma with period
-            return numberStr.Replace(".", "").Replace(',', '.');
+            if (char.IsDigit(c))
+                sb.Append(c);
         }
-        else
-        {
-            // Period is the decimal separator
-            // Remove commas (thousand separators)
-            return numberStr.Replace(",", "");
-        }
+
+        // Reconstruct with a period as the decimal separator
+        return sb + "." + decimalPart;
     }
 
     private MessageBoxResult ShowMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
     {
         try
         {
-            return Dispatcher.Invoke(() => MessageBox.Show(this, message, title, buttons, icon));
+            // Use Application.Current.Dispatcher to ensure we're on the main UI thread.
+            // Dispatcher.Invoke will execute the delegate immediately if we're already on the UI thread.
+            return Application.Current.Dispatcher.Invoke(() =>
+            {
+                // Try to use this window as the owner only if it's still loaded and has a valid handle.
+                // This prevents "The calling thread cannot access this object" or "Invalid handle" errors
+                // if the window is in the process of closing.
+                Window? owner = null;
+                try
+                {
+                    if (!_disposed && IsLoaded)
+                    {
+                        var helper = new System.Windows.Interop.WindowInteropHelper(this);
+                        if (helper.Handle != IntPtr.Zero)
+                        {
+                            owner = this;
+                        }
+                    }
+                }
+                catch
+                {
+                    // If we can't access the window properties, we'll just show the message box without an owner.
+                }
+
+                return owner != null
+                    ? MessageBox.Show(owner, message, title, buttons, icon)
+                    : MessageBox.Show(message, title, buttons, icon);
+            });
         }
         catch (Exception ex)
         {
@@ -1535,6 +1541,8 @@ public partial class MainWindow : IDisposable
             // Fallback: show without owner if something is really wrong
             try
             {
+                // Last resort fallback - if we're not on UI thread here, this might still fail in some environments,
+                // but we're already in an error state.
                 return MessageBox.Show(message, title, buttons, icon);
             }
             catch
@@ -1809,16 +1817,19 @@ public partial class MainWindow : IDisposable
                     LogMessage($"Fatal verification error: {ex.Message}");
                     await ReportBugAsync("Unhandled exception in verification", ex);
                 }
-                finally
-                {
-                    _operationTimer.Stop();
-                    UpdateProcessingTimeDisplay();
-                    SetControlsState(true);
-                    LogOperationSummary("verify", "Verification");
-                }
             });
 
-            await _runningTask;
+            try
+            {
+                await _runningTask;
+            }
+            finally
+            {
+                _operationTimer.Stop();
+                UpdateProcessingTimeDisplay();
+                SetControlsState(true);
+                LogOperationSummary("verify", "Verification");
+            }
         }
         catch (Exception ex)
         {
@@ -1870,6 +1881,7 @@ public partial class MainWindow : IDisposable
 
                     var processed = Interlocked.Increment(ref filesProcessedCount);
                     UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
+                    UpdateOverallProgress();
                     UpdateStatsDisplay();
                     UpdateProcessingTimeDisplay();
                 });
@@ -1893,6 +1905,7 @@ public partial class MainWindow : IDisposable
 
                     var processed = ++filesProcessedCount;
                     UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
+                    UpdateOverallProgress();
                     UpdateStatsDisplay();
                     UpdateProcessingTimeDisplay();
                 }
@@ -1921,7 +1934,6 @@ public partial class MainWindow : IDisposable
         try
         {
             LogMessage($"Verifying: {fileName}...");
-            var arguments = $"verify -i \"{inputFile}\"";
 
             tempWorkingDirectory = Path.Combine(Path.GetTempPath(), "BatchConvertToRVZ_DolphinTool_Temp_" + Path.GetRandomFileName());
             Directory.CreateDirectory(tempWorkingDirectory);
@@ -1929,13 +1941,16 @@ public partial class MainWindow : IDisposable
             process.StartInfo = new ProcessStartInfo
             {
                 FileName = dolphinToolPath,
-                Arguments = arguments,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WorkingDirectory = tempWorkingDirectory
             };
+            process.StartInfo.ArgumentList.Add("verify");
+            process.StartInfo.ArgumentList.Add("-i");
+            process.StartInfo.ArgumentList.Add(inputFile);
+
             process.EnableRaisingEvents = true;
 
             var outputBuilder = new StringBuilder();
@@ -2151,6 +2166,7 @@ public partial class MainWindow : IDisposable
     {
         try
         {
+            long lastCumulativeBytes = 0;
             while (!cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(WriteSpeedUpdateIntervalMs, cancellationToken);
@@ -2166,11 +2182,14 @@ public partial class MainWindow : IDisposable
 
                     if (timeDelta.TotalSeconds > 0)
                     {
-                        // Interlocked.Exchange atomically reads and resets the counter,
-                        // so concurrent Interlocked.Add calls from conversion threads
-                        // cannot cause lost updates or torn reads.
-                        var bytesThisInterval = Interlocked.Exchange(ref _aggregateTotalBytesWritten, 0);
-                        speedInMBps = (bytesThisInterval / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
+                        // Use Interlocked.Read to get the current cumulative value without resetting it.
+                        // We track the previous value locally to calculate the delta for this interval.
+                        var currentTotalBytes = Interlocked.Read(ref _aggregateTotalBytesWritten);
+                        var bytesDelta = currentTotalBytes - lastCumulativeBytes;
+
+                        speedInMBps = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
+
+                        lastCumulativeBytes = currentTotalBytes;
                         _aggregateLastCheckTime = currentTime;
                     }
                     else
@@ -2200,7 +2219,6 @@ public partial class MainWindow : IDisposable
             {
                 var percentage = total == 0 ? 0 : (double)current / total * 100;
                 ProgressText.Text = $"{operationVerb} file {current} of {total}: {currentFileName} ({percentage:F1}%)";
-                ProgressBar.Value = current;
             });
         }
         catch (TaskCanceledException)
@@ -2243,6 +2261,22 @@ public partial class MainWindow : IDisposable
         }
 
         return verb.EndsWith('e') ? verb + "d" : verb + "ed";
+    }
+
+    /// <summary>
+    /// Checks if a file name has any of the supported extensions, handling compound extensions like .nkit.iso.
+    /// </summary>
+    private static bool HasSupportedGameExtension(string fileName, string[] supportedExtensions)
+    {
+        foreach (var ext in supportedExtensions)
+        {
+            if (fileName.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     [GeneratedRegex(@"([\d.,]+)%")]

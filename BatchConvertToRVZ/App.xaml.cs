@@ -47,7 +47,7 @@ public partial class App
         // Send usage statistics on application launch
         if (StatsServiceInstance != null)
         {
-            _ = Task.Run(async () =>
+            _ = Task.Run((Func<Task>)(async () =>
             {
                 try
                 {
@@ -63,9 +63,9 @@ public partial class App
                     }
 
                     // Only report other types of exceptions that might indicate actual problems
-                    ReportException(ex, "StatsService.OnStartup");
+                    ReportException(ex, "StatsService.OnStartup", false);
                 }
-            });
+            }));
         }
     }
 
@@ -107,25 +107,26 @@ public partial class App
     {
         if (e.ExceptionObject is Exception exception)
         {
-            ReportException(exception, "AppDomain.UnhandledException");
+            ReportException(exception, "AppDomain.UnhandledException", true);
         }
     }
 
     private void App_DispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         var ex = e.Exception;
-        ReportException(ex, "Application.DispatcherUnhandledException");
 
         // For critical exceptions, let the app crash rather than running in a corrupted state.
         // IO and standard OperationCanceled are usually safe to "handle" if they bubbled up to here.
         if (ex is IOException or TaskCanceledException or OperationCanceledException or UnauthorizedAccessException)
         {
+            ReportException(ex, "Application.DispatcherUnhandledException", false);
             MessageBox.Show($"An unexpected but recoverable error occurred: {ex.Message}\n\nThe application will continue to run, but the current operation may have failed.",
                 "Recoverable Error", MessageBoxButton.OK, MessageBoxImage.Warning);
             e.Handled = true;
         }
         else
         {
+            ReportException(ex, "Application.DispatcherUnhandledException", true);
             // For other unknown/severe exceptions, show a final error message and let it crash to prevent data corruption
             MessageBox.Show($"A fatal error occurred and the application must close: {ex.Message}\n\nA bug report has been sent.",
                 "Fatal Error", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -136,11 +137,11 @@ public partial class App
 
     private void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
     {
-        ReportException(e.Exception, "TaskScheduler.UnobservedTaskException");
+        ReportException(e.Exception, "TaskScheduler.UnobservedTaskException", false);
         e.SetObserved();
     }
 
-    private void ReportException(Exception exception, string source)
+    private void ReportException(Exception exception, string source, bool isFatal)
     {
         try
         {
@@ -149,7 +150,19 @@ public partial class App
             // Notify developer
             if (BugReportServiceInstance != null)
             {
-                _ = BugReportServiceInstance.SendBugReportAsync(message);
+                var reportTask = BugReportServiceInstance.SendBugReportAsync(message);
+
+                if (isFatal)
+                {
+                    // For fatal exceptions, block the thread to ensure the report is sent before the process terminates.
+                    // We use a timeout to prevent hanging forever if the network is down.
+                    _ = reportTask.Wait(TimeSpan.FromSeconds(5));
+                }
+                else
+                {
+                    // For non-fatal exceptions, fire and forget
+                    _ = reportTask;
+                }
             }
         }
         catch
