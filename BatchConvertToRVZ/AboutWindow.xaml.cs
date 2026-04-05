@@ -40,8 +40,11 @@ public partial class AboutWindow
             }
 
             // Notify user
-            MessageBox.Show($"Unable to open link: {ex.Message}",
-                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                MessageBox.Show($"Unable to open link: {ex.Message}",
+                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            });
         }
 
         // Mark the event as handled

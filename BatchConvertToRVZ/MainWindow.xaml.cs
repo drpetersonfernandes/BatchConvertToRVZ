@@ -8,6 +8,7 @@ using System.Text;
 using System.Windows;
 using Microsoft.Win32;
 using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
 using SharpCompress.Archives;
 using SharpCompress.Readers;
 using SharpCompress.Common;
@@ -81,6 +82,34 @@ public partial class MainWindow : IDisposable
 
     // Counter to track active extractions (supports concurrent extractions in parallel mode)
     private int _activeExtractionCount;
+
+    // Real-time progress tracking for smooth overall progress bar
+    private readonly ConcurrentDictionary<string, double> _activeFileProgress = new();
+
+    private void UpdateOverallProgress()
+    {
+        try
+        {
+            if (_totalFilesToProcess == 0) return;
+
+            // Sum up all fractional progress from currently active files
+            double activeProgressSum = 0;
+            foreach (var progress in _activeFileProgress.Values)
+            {
+                activeProgressSum += progress / 100.0;
+            }
+
+            Dispatcher.Invoke(() =>
+            {
+                var completed = _successCount + _failureCount;
+                // Value is completed files + fraction of currently active ones
+                ProgressBar.Value = Math.Min(completed + activeProgressSum, _totalFilesToProcess);
+            });
+        }
+        catch (TaskCanceledException) { }
+        catch (InvalidOperationException) { }
+    }
+
 
     // Log batching
     private readonly System.Threading.Channels.Channel<string> _logChannel = System.Threading.Channels.Channel.CreateUnbounded<string>();
@@ -281,23 +310,24 @@ public partial class MainWindow : IDisposable
                     {
                         if (_disposed) return;
 
+                        // Only scroll to end if the user is already at the bottom (or very close to it)
+                        // This allows users to scroll up to read previous logs without being snapped back
+                        var isAtBottom = LogViewer.VerticalOffset + LogViewer.ViewportHeight >= LogViewer.ExtentHeight - 10;
+
                         LogViewer.AppendText(combinedLogs);
 
-                        // Clear log if it exceeds the limit to prevent UI freeze from large text operations
+                        // Efficiently clear log if it exceeds the limit to prevent UI freeze
                         if (LogViewer.LineCount > MaxLogLines)
                         {
-                            var text = LogViewer.Text;
-                            var lines = text.Split(Environment.NewLine);
-                            if (lines.Length > MaxLogLines)
-                            {
-                                // Keep only the last 1000 lines instead of clearing everything
-                                var keptLines = lines.Skip(lines.Length - 1000).ToArray();
-                                LogViewer.Text = string.Join(Environment.NewLine, keptLines) + Environment.NewLine;
-                                LogViewer.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] --- Log truncated (kept last 1000 lines) ---{Environment.NewLine}");
-                            }
+                            LogViewer.Clear();
+                            LogViewer.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] --- Log cleared (exceeded {MaxLogLines} lines) to prevent UI freeze ---{Environment.NewLine}");
+                            isAtBottom = true; // Always scroll to end after clear
                         }
 
-                        LogViewer.ScrollToEnd();
+                        if (isAtBottom)
+                        {
+                            LogViewer.ScrollToEnd();
+                        }
                     }, System.Windows.Threading.DispatcherPriority.Background);
                 }
                 catch
@@ -808,7 +838,7 @@ public partial class MainWindow : IDisposable
             {
                 // Small delay before cleaning up temp directory
                 await Task.Delay(100, CancellationToken.None);
-                TryDeleteDirectory(tempDir, "temporary extraction directory");
+                await TryDeleteDirectory(tempDir, "temporary extraction directory");
             }
         }
     }
@@ -844,7 +874,7 @@ public partial class MainWindow : IDisposable
                 if (string.IsNullOrEmpty(args.Data)) return;
 
                 outputBuilder.AppendLine(args.Data);
-                if (!UpdateConversionProgress(args.Data))
+                if (!UpdateConversionProgress(args.Data, inputFile))
                 {
                     LogMessage($"[DolphinTool] {args.Data}");
                 }
@@ -857,7 +887,7 @@ public partial class MainWindow : IDisposable
                 }
 
                 errorBuilder.AppendLine(args.Data);
-                if (!UpdateConversionProgress(args.Data))
+                if (!UpdateConversionProgress(args.Data, inputFile))
                 {
                     LogMessage($"[DolphinTool ERROR] {args.Data}");
                 }
@@ -1015,6 +1045,10 @@ public partial class MainWindow : IDisposable
         }
         finally
         {
+            // Remove this file from active progress tracking
+            _activeFileProgress.TryRemove(inputFile, out _);
+            UpdateOverallProgress();
+
             // Decrement active conversion count
             Interlocked.Decrement(ref _activeConversionCount);
             // Only reset display if no more active conversions
@@ -1032,21 +1066,23 @@ public partial class MainWindow : IDisposable
         {
             if (!File.Exists(filePath)) return true;
 
-            // Clear attributes once up front (handles read-only, hidden, etc.)
-            try
-            {
-                File.SetAttributes(filePath, FileAttributes.Normal);
-            }
-            catch
-            {
-                /* Best-effort; delete may still succeed */
-            }
-
             const int maxAttempts = 10;
             for (var attempt = 0; attempt < maxAttempts; attempt++)
             {
                 try
                 {
+                    // Clear attributes on each attempt (handles read-only, hidden, etc.)
+                    // This is done inside the loop in case attributes change between retries.
+                    try
+                    {
+                        File.SetAttributes(filePath, FileAttributes.Normal);
+                    }
+                    catch (Exception attrEx)
+                    {
+                        // Best-effort; delete might still work even if SetAttributes fails
+                        LogMessage($"Warning: Could not clear attributes for {Path.GetFileName(filePath)}: {attrEx.Message}");
+                    }
+
                     File.Delete(filePath);
                     LogMessage($"Deleted {description}: {Path.GetFileName(filePath)}");
                     return true;
@@ -1061,19 +1097,6 @@ public partial class MainWindow : IDisposable
                     {
                         GC.Collect();
                         GC.WaitForPendingFinalizers();
-                    }
-
-                    if (ex is UnauthorizedAccessException)
-                    {
-                        // Re-attempt attribute clear in case it changed between retries
-                        try
-                        {
-                            File.SetAttributes(filePath, FileAttributes.Normal);
-                        }
-                        catch
-                        {
-                            // ignored
-                        }
                     }
                 }
 
@@ -1112,7 +1135,7 @@ public partial class MainWindow : IDisposable
     }
 
 
-    private void TryDeleteDirectory(string dirPath, string description)
+    private async Task TryDeleteDirectory(string dirPath, string description)
     {
         try
         {
@@ -1128,7 +1151,7 @@ public partial class MainWindow : IDisposable
                 }
                 catch (IOException)
                 {
-                    Thread.Sleep(50);
+                    await Task.Delay(50);
                 }
             }
 
@@ -1212,7 +1235,9 @@ public partial class MainWindow : IDisposable
                             if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
                                 Directory.CreateDirectory(entryDir);
 
-                            entry.WriteToFile(entryPath);
+                            using var entryStream = entry.OpenEntryStream();
+                            using var fileStream = File.Create(entryPath);
+                            CopyStreamWithCancellationAsync(entryStream, fileStream, cancellationToken).GetAwaiter().GetResult();
                         }
                     }
                     catch (ArchiveException)
@@ -1247,7 +1272,7 @@ public partial class MainWindow : IDisposable
 
                             using var entryStream = reader.OpenEntryStream();
                             using var fileStream = File.Create(entryPath);
-                            entryStream.CopyTo(fileStream);
+                            CopyStreamWithCancellationAsync(entryStream, fileStream, cancellationToken).GetAwaiter().GetResult();
                         }
                     }
 
@@ -1260,7 +1285,7 @@ public partial class MainWindow : IDisposable
             else
             {
                 // Clean up the temporary directory on unsupported archive type
-                TryDeleteDirectory(tempDir, "unsupported archive type extraction directory");
+                await TryDeleteDirectory(tempDir, "unsupported archive type extraction directory");
                 return (false, string.Empty, string.Empty, $"Unsupported archive type: {extension}");
             }
 
@@ -1275,7 +1300,7 @@ public partial class MainWindow : IDisposable
             }
 
             // No supported game image found - clean up the temp directory to prevent disk leak
-            TryDeleteDirectory(tempDir, "extraction directory with no supported game images");
+            await TryDeleteDirectory(tempDir, "extraction directory with no supported game images");
             return (false, string.Empty, string.Empty, $"No supported game image ({PrimaryTargetExtensionsDisplay}) found in archive.");
         }
         catch (OperationCanceledException)
@@ -1284,7 +1309,7 @@ public partial class MainWindow : IDisposable
             LogMessage($"Extraction cancelled for {archiveFileName}.");
 
             // Clean up the temporary directory created for this operation
-            TryDeleteDirectory(tempDir, $"cancelled extraction directory for {archiveFileName}");
+            await TryDeleteDirectory(tempDir, $"cancelled extraction directory for {archiveFileName}");
 
             // Re-throw to indicate the operation was cancelled
             throw;
@@ -1300,7 +1325,7 @@ public partial class MainWindow : IDisposable
             LogMessage(errorMessage);
 
             // Clean up the temporary directory on failure
-            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the detailed error message
             return (false, string.Empty, string.Empty, errorMessage);
@@ -1312,7 +1337,7 @@ public partial class MainWindow : IDisposable
             LogMessage(errorMessage);
 
             // Clean up the temporary directory on failure
-            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the detailed error message
             return (false, string.Empty, string.Empty, errorMessage);
@@ -1324,7 +1349,7 @@ public partial class MainWindow : IDisposable
             LogMessage(errorMessage);
 
             // Clean up the temporary directory on failure
-            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the detailed error message
             return (false, string.Empty, string.Empty, errorMessage);
@@ -1338,7 +1363,7 @@ public partial class MainWindow : IDisposable
             LogMessage(errorMessage);
 
             // Clean up the temporary directory on failure
-            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the detailed error message
             return (false, string.Empty, string.Empty, errorMessage);
@@ -1350,7 +1375,7 @@ public partial class MainWindow : IDisposable
             LogMessage(errorMessage);
 
             // Clean up the temporary directory on failure
-            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the detailed error message
             return (false, string.Empty, string.Empty, errorMessage);
@@ -1364,7 +1389,7 @@ public partial class MainWindow : IDisposable
             await ReportBugAsync($"Error extracting archive: {archiveFileName}", ex);
 
             // Clean up the temporary directory on failure
-            TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
+            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
 
             // Return a failure result with the error message
             return (false, string.Empty, string.Empty, $"Exception during extraction: {ex.Message}");
@@ -1376,8 +1401,19 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    private static async Task CopyStreamWithCancellationAsync(Stream input, Stream output, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[81920]; // 80KB buffer
+        int bytesRead;
+        while ((bytesRead = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            await output.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
 
-    private bool UpdateConversionProgress(string progressLine)
+
+    private bool UpdateConversionProgress(string progressLine, string fileName)
     {
         try
         {
@@ -1388,10 +1424,13 @@ public partial class MainWindow : IDisposable
             // FIX: Remove thousand separators and normalize decimal separator for locale-independent parsing
             // Handles formats like "1,000.5%", "1.000,5%", "1000.5%", "1000,5%"
             percentageStr = RemoveThousandSeparators(percentageStr);
-            if (!double.TryParse(percentageStr, NumberStyles.Any, CultureInfo.InvariantCulture, out _))
+            if (!double.TryParse(percentageStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var percentage))
                 return false;
 
-            // Progress is shown in the progress bar; logging every update causes UI lag
+            // Store this file's progress and trigger an overall UI update
+            _activeFileProgress[fileName] = percentage;
+            UpdateOverallProgress();
+
             return true;
         }
         catch (Exception ex)
@@ -1480,9 +1519,25 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private void ShowMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
+    private MessageBoxResult ShowMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
     {
-        MessageBox.Show(this, message, title, buttons, icon);
+        try
+        {
+            return Dispatcher.Invoke(() => MessageBox.Show(this, message, title, buttons, icon));
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Failed to show message box: {ex.Message}");
+            // Fallback: show without owner if something is really wrong
+            try
+            {
+                return MessageBox.Show(message, title, buttons, icon);
+            }
+            catch
+            {
+                return MessageBoxResult.None;
+            }
+        }
     }
 
     private void ShowError(string message)
@@ -1591,7 +1646,7 @@ public partial class MainWindow : IDisposable
                               $"Release Notes:\n{latestRelease.Body}\n\n" +
                               "Would you like to go to the download page?";
 
-                var result = MessageBox.Show(this, message, "Update Available", MessageBoxButton.YesNo, MessageBoxImage.Information);
+                var result = ShowMessageBox(message, "Update Available", MessageBoxButton.YesNo, MessageBoxImage.Information);
 
                 if (result == MessageBoxResult.Yes)
                 {
@@ -1603,7 +1658,7 @@ public partial class MainWindow : IDisposable
                 LogMessage("You are using the latest version.");
                 if (isManualCheck)
                 {
-                    MessageBox.Show(this, "You are already using the latest version.", "No Updates Found", MessageBoxButton.OK, MessageBoxImage.Information);
+                    ShowMessageBox("You are already using the latest version.", "No Updates Found", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
         }
@@ -1613,7 +1668,7 @@ public partial class MainWindow : IDisposable
             LogMessage(errorMessage);
             if (isManualCheck)
             {
-                MessageBox.Show(this, $"An error occurred while checking for updates:\n{ex.Message}", "Update Check Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                ShowMessageBox($"An error occurred while checking for updates:\n{ex.Message}", "Update Check Failed", MessageBoxButton.OK, MessageBoxImage.Error);
             }
 
             await ReportBugAsync("Failed to check for updates", ex);
@@ -1636,7 +1691,7 @@ public partial class MainWindow : IDisposable
             var errorMessage = $"Error opening URL: {url}. Exception: {ex.Message}";
             LogMessage(errorMessage);
             _ = App.BugReportServiceInstance?.SendBugReportAsync(errorMessage);
-            MessageBox.Show($"Unable to open link: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowMessageBox($"Unable to open link: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -1882,11 +1937,17 @@ public partial class MainWindow : IDisposable
             var outputBuilder = new StringBuilder();
             process.OutputDataReceived += (_, args) =>
             {
-                if (args.Data != null) outputBuilder.AppendLine(args.Data);
+                if (string.IsNullOrEmpty(args.Data)) return;
+
+                outputBuilder.AppendLine(args.Data);
+                LogMessage($"[DolphinTool] {args.Data}");
             };
             process.ErrorDataReceived += (_, args) =>
             {
-                if (args.Data != null) outputBuilder.AppendLine(args.Data);
+                if (string.IsNullOrEmpty(args.Data)) return;
+
+                outputBuilder.AppendLine(args.Data);
+                LogMessage($"[DolphinTool ERROR] {args.Data}");
             };
 
             process.Start();
@@ -1960,7 +2021,7 @@ public partial class MainWindow : IDisposable
 
             if (!string.IsNullOrEmpty(tempWorkingDirectory) && Directory.Exists(tempWorkingDirectory))
             {
-                TryDeleteDirectory(tempWorkingDirectory, $"temporary working directory for {fileName}");
+                await TryDeleteDirectory(tempWorkingDirectory, $"temporary working directory for {fileName}");
             }
         }
 
@@ -2250,13 +2311,13 @@ public partial class MainWindow : IDisposable
     {
         var fileName = Path.GetFileName(filePath);
 
-        // Handle compound extension .nkit.iso first
-        if (fileName.EndsWith(PrimaryTargetExtensionsInsideArchive[^1], StringComparison.OrdinalIgnoreCase))
+        // Handle compound extension .nkit.iso explicitly first as it's the only compound one
+        if (fileName.EndsWith(".nkit.iso", StringComparison.OrdinalIgnoreCase))
         {
-            return Path.GetFileNameWithoutExtension(fileName[..^4]); // Remove .iso first, then .nkit
+            return fileName[..^9]; // Remove .nkit.iso
         }
 
-        // Handle other game image extensions
+        // Handle other game image extensions from our supported list
         foreach (var ext in PrimaryTargetExtensionsInsideArchive)
         {
             if (fileName.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
@@ -2265,7 +2326,7 @@ public partial class MainWindow : IDisposable
             }
         }
 
-        // Fallback to standard behavior
+        // Fallback to standard behavior if no target extension matched
         return Path.GetFileNameWithoutExtension(fileName);
     }
 }

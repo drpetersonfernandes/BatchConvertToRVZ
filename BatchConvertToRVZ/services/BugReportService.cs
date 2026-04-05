@@ -86,14 +86,14 @@ public class BugReportService : IDisposable
     {
         return new SystemInfo
         {
-            Message = message,
             ApplicationName = _applicationName,
             Date = DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
             ApplicationVersion = _applicationVersion,
             OsVersion = Environment.OSVersion.ToString(),
             Architecture = RuntimeInformation.ProcessArchitecture.ToString().ToUpperInvariant(),
             Bitness = Environment.Is64BitOperatingSystem ? "64-bit" : "32-bit",
-            WindowsVersion = GetWindowsVersion()
+            WindowsVersion = GetWindowsVersion(),
+            Message = message
         };
     }
 

@@ -57,8 +57,8 @@ public partial class UpdateService : IDisposable
                 return (false, null);
             }
 
-            var currentVersion = GetCurrentVersion();
-            var latestVersion = ParseVersionFromTag(latestRelease.TagName);
+            var currentVersion = NormalizeVersion(GetCurrentVersion());
+            var latestVersion = NormalizeVersion(ParseVersionFromTag(latestRelease.TagName));
 
             if (latestVersion != null && latestVersion > currentVersion)
             {
@@ -72,6 +72,22 @@ public partial class UpdateService : IDisposable
         }
 
         return (false, null);
+    }
+
+    /// <summary>
+    /// Normalizes a version to always have 4 components (Major, Minor, Build, Revision).
+    /// This ensures consistent comparisons between tags like "1.8.1" and assembly versions like "1.8.1.0".
+    /// </summary>
+    private static Version? NormalizeVersion(Version? v)
+    {
+        if (v == null) return null;
+
+        return new Version(
+            v.Major,
+            v.Minor,
+            v.Build != -1 ? v.Build : 0,
+            v.Revision != -1 ? v.Revision : 0
+        );
     }
 
     /// <summary>
