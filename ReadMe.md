@@ -16,37 +16,37 @@ Batch Convert to RVZ is a comprehensive Windows application that provides a user
 ## Features
 
 ### Conversion Features
-- **Batch Processing**: Convert multiple files in a single operation
-- **Supported Input Formats**: Handles GameCube and Wii disc images (`.iso`, `.gcm`, `.wbfs`, `.nkit.iso`) and archives containing them (`.zip`, `.7z`, `.rar`)
-- **Archive Extraction**: Automatically extracts and processes game files from ZIP, 7Z, and RAR archives using SharpCompress
-- **Configurable Compression**: Customize compression method, level, and block size for optimal results
-- **Parallel Processing**: Process multiple files concurrently (up to 3 files) to speed up batch completion
-- **Smart File Ordering**: Option to process smaller files first for quicker progress visibility
-- **Smart File Handling**: Skips files that already exist in the output directory
-- **Delete Original Option**: Optionally remove source files (including archives) after successful conversion
+- **Batch Processing**: Convert multiple files in a single operation.
+- **Supported Input Formats**: Handles GameCube and Wii disc images (`.iso`, `.gcm`, `.wbfs`, `.nkit.iso`) and archives containing them (`.zip`, `.7z`, `.rar`).
+- **Archive Extraction**: Automatically extracts and processes game files from ZIP, 7Z, and RAR archives using SharpCompress.
+- **Configurable Compression**: Customize compression method, level, and block size for optimal results.
+- **Parallel Processing**: Process multiple files concurrently (up to 3 files) to speed up batch completion.
+- **Smart File Handling**: Skips files that already exist in the output directory.
+- **Delete Original Option**: Optionally remove source files (including archives) after successful conversion.
+- **Robust Parsing**: Advanced logic for handling compound extensions like `.nkit.iso` and localized number formats.
 
 ### Verification Features
-- **RVZ Integrity Verification**: Verify the integrity of existing RVZ files using DolphinTool
-- **Batch Verification**: Check multiple RVZ files in a single operation
-- **Parallel Verification**: Verify multiple RVZ files concurrently (up to 3 files)
-- **File Organization**: Automatically move verified files to `_Success` or `_Failed` subfolders
-- **Detailed Reporting**: Get comprehensive verification results for each file
+- **RVZ Integrity Verification**: Verify the integrity of existing RVZ files using DolphinTool.
+- **Real-time Feedback**: Live logging of DolphinTool verification output (not just at the end).
+- **Batch Verification**: Check multiple RVZ files in a single operation.
+- **Parallel Verification**: Verify multiple RVZ files concurrently (up to 3 files).
+- **File Organization**: Automatically move verified files to `_Success` or `_Failed` subfolders.
+- **Detailed Reporting**: Get comprehensive verification results for each file.
 
 ### User Experience
-- **Tabbed Interface**: Separate tabs for conversion and verification operations
-- **Menu Bar**: Easy access to File (Exit), Help (Check for Updates, About)
-- **Real-time Progress Tracking**: Detailed progress indication with file-by-file status
-- **Write Speed Monitoring**: Real-time display of conversion write speeds
-- **Processing Statistics**: Live updates on total files, success/failure counts, and processing time
-- **Comprehensive Logging**: Detailed real-time logging with timestamps for all operations
-- **Cancellation Support**: Gracefully cancel operations at any time
-- **Auto-Update Checking**: Automatic update notifications with GitHub integration
+- **Smooth Progress Tracking**: A single, overall progress bar that smoothly tracks the entire batch operation, including real-time percentages from active tasks.
+- **Intelligent Auto-Scroll**: The log viewer only snaps to the bottom if you are already looking at the latest logs, allowing you to read previous errors without interruption.
+- **Immediate Cancellation**: Stop extractions and conversions instantly, even for massive 8GB+ files, thanks to asynchronous I/O and cancellation token support.
+- **Optimized Logging**: High-performance log processing that handles thousands of lines without UI stuttering or high memory usage.
+- **Thread-Safe Dialogs**: Robust UI handling that prevents crashes when showing error messages or update prompts from background threads.
+- **Auto-Update Checking**: Accurate version comparison (e.g., matching `1.8.1` tags to `1.8.1.0` assembly versions) with seamless GitHub integration.
 
 ### Technical Features
-- **Cross-Architecture Support**: Native support for both x64 and ARM64 Windows systems
-- **Global Error Reporting**: Automatic bug reporting to developers with comprehensive error details
-- **Memory Management**: Proper resource disposal and memory leak prevention
-- **Temporary File Management**: Intelligent cleanup of temporary extraction directories
+- **Asynchronous Architecture**: Fully async/await implementation to keep the UI responsive during intensive I/O and processing.
+- **Cross-Architecture Support**: Native support for both x64 and ARM64 Windows systems.
+- **Global Error Reporting**: Automatic bug reporting to developers with comprehensive error details.
+- **Robust Cleanup**: Asynchronous retry logic for deleting locked temporary files and directories.
+- **Memory Management**: Efficient string handling and proper resource disposal to prevent leaks.
 
 ## Architecture
 
@@ -91,37 +91,36 @@ The application follows a modular architecture with clear separation of concerns
 
 ### Converting Files
 
-1. **Select Input Folder**: Click "Browse" next to "Input Folder" to select the folder containing game files or archives to convert
-2. **Select Output Folder**: Click "Browse" next to "Output Folder" to choose where the RVZ files will be saved
+1. **Select Input Folder**: Click "Browse" next to "Input Folder" to select the folder containing game files or archives to convert.
+2. **Select Output Folder**: Click "Browse" next to "Output Folder" to choose where the RVZ files will be saved.
 3. **Configure General Settings**:
-   - Check "Delete original files after conversion" to remove source files after successful conversion
-   - Check "Enable parallel processing" to convert multiple files concurrently (recommended for faster processing)
-   - Set "Max concurrent files" (2-3) based on your system's capabilities
-   - Check "Process smaller files first" to see progress more quickly
+   - Check "Delete original files after conversion" to remove source files after successful conversion.
+   - Check "Enable parallel processing" to convert multiple files concurrently (recommended for faster processing).
+   - Set "Max concurrent files" (2-3) based on your system's capabilities.
 4. **Configure Compression Settings**:
-   - **Method**: Choose compression algorithm (zstd, zlib, lzma, lzma2, bzip2, lz4)
-   - **Level**: Adjust compression level (varies by method, e.g., 1-22 for zstd)
-   - **Block Size**: Select block size (32KB to 2MB, 128KB recommended)
-5. **Start Conversion**: Click "Start Conversion" to begin the batch process
-6. **Monitor Progress**: Watch the progress bars, statistics, and detailed log messages
-7. **Cancel (if needed)**: Click "Cancel" to stop the operation gracefully
+   - **Method**: Choose compression algorithm (zstd, zlib, lzma, lzma2, bzip2, lz4).
+   - **Level**: Adjust compression level (varies by method, e.g., 1-22 for zstd).
+   - **Block Size**: Select block size (32KB to 2MB, 128KB recommended).
+5. **Start Conversion**: Click "Start Conversion" to begin the batch process.
+6. **Monitor Progress**: Watch the smooth overall progress bar, statistics, and real-time log messages.
+7. **Cancel (if needed)**: Click "Cancel" to stop the operation gracefully and instantly.
 
 ### Verifying RVZ Files
 
-1. **Switch to Verify Tab**: Click the "Verify Integrity" tab
-2. **Select Verify Folder**: Click "Browse" to select the folder containing RVZ files to verify
+1. **Switch to Verify Tab**: Click the "Verify Integrity" tab.
+2. **Select Verify Folder**: Click "Browse" to select the folder containing RVZ files to verify.
 3. **Configure Options**:
-   - Check "Enable parallel processing" to verify multiple files concurrently (up to 3)
-   - Check "Move failed RVZ files to '_Failed' subfolder" to organize problematic files
-   - Check "Move successful RVZ files to '_Success' subfolder" to organize verified files
-4. **Start Verification**: Click "Start Verification" to begin checking file integrity
-5. **Review Results**: Check the log and statistics for detailed verification results
+   - Check "Enable parallel processing" to verify multiple files concurrently (up to 3).
+   - Check "Move failed RVZ files to '_Failed' subfolder" to organize problematic files.
+   - Check "Move successful RVZ files to '_Success' subfolder" to organize verified files.
+4. **Start Verification**: Click "Start Verification" to begin checking file integrity with real-time feedback.
+5. **Review Results**: Check the log and statistics for detailed verification results.
 
 ### Menu Options
 
-- **File > Exit**: Close the application
-- **Help > Check for Updates**: Manually check for new versions on GitHub
-- **Help > About**: View application information and credits
+- **File > Exit**: Close the application.
+- **Help > Check for Updates**: Manually check for new versions on GitHub.
+- **Help > About**: View application information and credits.
 
 ## Compression Settings Guide
 
@@ -144,21 +143,21 @@ The application follows a modular architecture with clear separation of concerns
 RVZ is a compressed disk image format developed specifically for the Dolphin Emulator. It is designed to store GameCube and Wii game data efficiently while retaining all necessary information for emulation.
 
 ### Key Benefits
-- **Efficient Compression**: Significantly reduces file sizes compared to raw ISO images using advanced compression algorithms like Zstandard
-- **Lossless**: Compression is completely lossless, meaning no game data is lost during conversion
-- **Metadata Preservation**: Maintains all important disc metadata and structure
-- **Data Integrity**: Includes built-in verification to ensure image integrity
-- **Full Compatibility**: Directly supported by modern versions of Dolphin Emulator
-- **Faster Loading**: Often loads faster than uncompressed ISOs due to reduced I/O overhead
+- **Efficient Compression**: Significantly reduces file sizes compared to raw ISO images using advanced compression algorithms like Zstandard.
+- **Lossless**: Compression is completely lossless, meaning no game data is lost during conversion.
+- **Metadata Preservation**: Maintains all important disc metadata and structure.
+- **Data Integrity**: Includes built-in verification to ensure image integrity.
+- **Full Compatibility**: Directly supported by modern versions of Dolphin Emulator.
+- **Faster Loading**: Often loads faster than uncompressed ISOs due to reduced I/O overhead.
 
 ## Troubleshooting
 
-- **Missing Dependencies**: Ensure `DolphinTool.exe` (or `DolphinTool_arm64.exe` for ARM64 systems) is present in the application directory
-- **Permission Issues**: Make sure you have read permissions for input directories and write permissions for output directories
-- **Archive Extraction Failures**: Verify that the archive files are not corrupted
-- **Conversion Errors**: Check the detailed log output for specific error messages
-- **Performance Issues**: Try reducing the number of concurrent files if you experience system instability
-- **Auto-Reporting**: The application automatically reports unexpected errors to developers for continuous improvement
+- **Missing Dependencies**: Ensure `DolphinTool.exe` (or `DolphinTool_arm64.exe` for ARM64 systems) is present in the application directory.
+- **Permission Issues**: Make sure you have read permissions for input directories and write permissions for output directories.
+- **Archive Extraction Failures**: Verify that the archive files are not corrupted. The app now supports instant cancellation if extraction hangs.
+- **Conversion Errors**: Check the detailed real-time log output for specific error messages.
+- **Performance Issues**: Try reducing the number of concurrent files if you experience system instability.
+- **Auto-Reporting**: The application automatically reports unexpected errors to developers for continuous improvement.
 
 ## Development
 
@@ -184,8 +183,8 @@ BatchConvertToRVZ/
 
 ## Acknowledgements
 
-- **DolphinTool**: Uses `DolphinTool` from the [Dolphin Emulator project](https://dolphin-emu.org/) for RVZ conversion and verification
-- **SharpCompress**: Uses the [SharpCompress](https://github.com/adamhathcock/sharpcompress) library for reliable archive extraction
+- **DolphinTool**: Uses `DolphinTool` from the [Dolphin Emulator project](https://dolphin-emu.org/) for RVZ conversion and verification.
+- **SharpCompress**: Uses the [SharpCompress](https://github.com/adamhathcock/sharpcompress) library for reliable archive extraction.
 - **Development**: Created and maintained by [Pure Logic Code](https://www.purelogiccode.com)
 
 ## Support the Project

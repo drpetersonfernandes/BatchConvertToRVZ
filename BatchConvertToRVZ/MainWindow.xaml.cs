@@ -106,8 +106,12 @@ public partial class MainWindow : IDisposable
                 ProgressBar.Value = Math.Min(completed + activeProgressSum, _totalFilesToProcess);
             });
         }
-        catch (TaskCanceledException) { }
-        catch (InvalidOperationException) { }
+        catch (TaskCanceledException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
 
