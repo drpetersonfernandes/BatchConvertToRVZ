@@ -9,6 +9,8 @@ A Windows desktop utility for batch converting GameCube and Wii disc images to R
 
 ![Batch Convert to RVZ](screenshot.png)
 
+![Batch Convert to RVZ](screenshot2.png)
+
 ## Overview
 
 Batch Convert to RVZ is a comprehensive Windows application that provides a user-friendly interface for converting multiple GameCube and Wii game files to the RVZ format. It uses **DolphinTool** from the Dolphin Emulator project for conversions and verification, while providing advanced features like batch processing, archive extraction, and parallel processing for improved performance.
