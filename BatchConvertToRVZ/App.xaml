@@ -95,6 +95,13 @@
         <SolidColorBrush x:Key="ProgressBackgroundBrush" Color="#2d333b"/>
         <SolidColorBrush x:Key="ProgressForegroundBrush" Color="#00bcd4"/>
 
+        <!-- ==================== OVERLAY & EFFECTS ==================== -->
+        <SolidColorBrush x:Key="OverlayBackgroundBrush" Color="#CC000000"/>
+        <Color x:Key="TerminalGlowColor">#39FF14</Color>
+
+        <!-- ==================== BUTTON TEXT COLORS ==================== -->
+        <SolidColorBrush x:Key="ButtonTextDarkBrush" Color="#121518"/>
+
         <!-- ==================== DEFAULT STYLE TARGET TYPES ==================== -->
 
         <!-- Default ToolTip Style -->
@@ -601,6 +608,46 @@
             <Setter Property="CornerRadius" Value="6"/>
             <Setter Property="Margin" Value="4"/>
             <Setter Property="Padding" Value="10"/>
+        </Style>
+
+        <!-- Terminal LogViewer Style -->
+        <Style x:Key="TerminalLogViewerStyle" TargetType="TextBox">
+            <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="VerticalAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Top"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="Padding" Value="10"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Background" Value="{StaticResource TerminalBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TerminalForegroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="TextWrapping" Value="NoWrap"/>
+            <Setter Property="CaretBrush" Value="{StaticResource TerminalForegroundBrush}"/>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect ShadowDepth="0" Color="{StaticResource TerminalGlowColor}" BlurRadius="2" Opacity="0.4"/>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Extraction Overlay Style -->
+        <Style x:Key="ExtractionOverlayStyle" TargetType="Grid">
+            <Setter Property="Background" Value="{StaticResource OverlayBackgroundBrush}"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+        </Style>
+
+        <!-- Extraction Overlay Border Style -->
+        <Style x:Key="ExtractionOverlayBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PrimaryAccentBrush}"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="30"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
 
     </Application.Resources>

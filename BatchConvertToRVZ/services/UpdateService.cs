@@ -65,10 +65,22 @@ public partial class UpdateService : IDisposable
                 return (true, latestRelease);
             }
         }
-        catch (Exception)
+        catch (HttpRequestException)
         {
-            // Could be a network error, JSON parsing error, etc. Silently fail for automatic checks.
+            // Network errors are expected during automatic checks, silently fail
             return (false, null);
+        }
+        catch (TaskCanceledException)
+        {
+            // Timeouts/cancellations are expected during automatic checks, silently fail
+            return (false, null);
+        }
+        catch (Exception ex)
+        {
+            // Unexpected errors should be reported for debugging
+            // Use the global exception handler through App domain
+            System.Diagnostics.Debug.WriteLine($"Unexpected error in UpdateService: {ex}");
+            throw; // Re-throw to let global handler catch and report
         }
 
         return (false, null);

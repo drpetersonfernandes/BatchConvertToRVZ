@@ -5,13 +5,35 @@ using System.Windows.Navigation;
 
 namespace BatchConvertToRVZ;
 
+/// <summary>
+/// Interaction logic for the About window.
+/// Displays application version and credits information.
+/// </summary>
 public partial class AboutWindow
 {
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AboutWindow"/> class.
+    /// </summary>
     public AboutWindow()
     {
-        InitializeComponent();
+        try
+        {
+            InitializeComponent();
+            AppVersionTextBlock.Text = $"Version: {GetApplicationVersion()}";
+        }
+        catch (Exception ex)
+        {
+            // Notify developer if initialization fails
+            if (App.BugReportServiceInstance != null)
+            {
+                _ = App.BugReportServiceInstance.SendBugReportAsync($"Error initializing AboutWindow: {ex.Message}");
+            }
 
-        AppVersionTextBlock.Text = $"Version: {GetApplicationVersion()}";
+            // Notify user and rethrow to prevent window from opening in invalid state
+            MessageBox.Show($"Error initializing About window: {ex.Message}",
+                "Initialization Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            throw;
+        }
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e)

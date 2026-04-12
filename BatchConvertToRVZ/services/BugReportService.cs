@@ -25,6 +25,12 @@ public class BugReportService : IDisposable
     private readonly string _applicationName;
     private readonly string _applicationVersion;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="BugReportService"/> class.
+    /// </summary>
+    /// <param name="apiUrl">The URL of the BugReport API.</param>
+    /// <param name="apiKey">The API key for authentication.</param>
+    /// <param name="applicationName">The name of the application sending bug reports.</param>
     public BugReportService(string apiUrl, string apiKey, string applicationName)
     {
         _apiUrl = apiUrl;

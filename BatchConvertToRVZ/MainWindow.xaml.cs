@@ -5,6 +5,7 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Channels;
 using System.Windows;
 using Microsoft.Win32;
 using System.Text.RegularExpressions;
@@ -15,10 +16,14 @@ using SharpCompress.Common;
 
 namespace BatchConvertToRVZ;
 
+/// <summary>
+/// Interaction logic for the MainWindow.
+/// Provides batch conversion and verification of game disc images to RVZ format.
+/// </summary>
 public partial class MainWindow : IDisposable
 {
     private bool _disposed;
-    private bool _isClosing;
+    private volatile bool _isClosing;
     private Task? _runningTask;
     private bool _dependenciesOk;
     private string? _dolphinToolPath;
@@ -35,7 +40,7 @@ public partial class MainWindow : IDisposable
     private int _rvzBlockSize = 131072; // Default block size (128KB)
 
     // Compression level ranges for different methods
-    private static readonly Dictionary<string, (int Min, int Max)> CompressionLevelRanges = new()
+    private static readonly Dictionary<string, (int Min, int Max)> CompressionLevelRanges = new(StringComparer.OrdinalIgnoreCase)
     {
         { "zstd", (1, 22) },
         { "zlib", (1, 9) },
@@ -85,6 +90,7 @@ public partial class MainWindow : IDisposable
 
     // Real-time progress tracking for smooth overall progress bar
     private readonly ConcurrentDictionary<string, double> _activeFileProgress = new();
+    private readonly object _progressLock = new();
 
     private void UpdateOverallProgress()
     {
@@ -94,9 +100,12 @@ public partial class MainWindow : IDisposable
 
             // Sum up all fractional progress from currently active files
             double activeProgressSum = 0;
-            foreach (var progress in _activeFileProgress.Values)
+            lock (_progressLock)
             {
-                activeProgressSum += progress / 100.0;
+                foreach (var progress in _activeFileProgress.Values)
+                {
+                    activeProgressSum += progress / 100.0;
+                }
             }
 
             Dispatcher.Invoke(() =>
@@ -116,9 +125,13 @@ public partial class MainWindow : IDisposable
 
 
     // Log batching
-    private readonly System.Threading.Channels.Channel<string> _logChannel = System.Threading.Channels.Channel.CreateUnbounded<string>();
+    private readonly Channel<string> _logChannel = Channel.CreateUnbounded<string>();
     private readonly Task? _logProcessorTask;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="MainWindow"/> class.
+    /// Sets up the UI, logging system, and checks for dependencies.
+    /// </summary>
     public MainWindow()
     {
         InitializeComponent();
@@ -287,7 +300,14 @@ public partial class MainWindow : IDisposable
     {
         if (_disposed) return;
 
-        _logChannel.Writer.TryWrite($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+        try
+        {
+            _logChannel.Writer.TryWrite($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+        }
+        catch (ChannelClosedException)
+        {
+            // Channel is closed, ignore
+        }
     }
 
     private async Task ProcessLogsAsync()
@@ -334,9 +354,13 @@ public partial class MainWindow : IDisposable
                         }
                     }, System.Windows.Threading.DispatcherPriority.Background);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Silently fail if the Dispatcher is shutting down
+                    // Silently fail if the Dispatcher is shutting down, but report critical errors
+                    if (ex is not InvalidOperationException && ex is not TaskCanceledException)
+                    {
+                        _ = Task.Run(() => ReportBugAsync("Error in ProcessLogsAsync Dispatcher operation", ex));
+                    }
                 }
             }
 
@@ -385,7 +409,7 @@ public partial class MainWindow : IDisposable
             _currentDegreeOfParallelismForFiles = 1;
             if (useParallelFileProcessing && DegreeOfParallelismComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem selectedItem)
             {
-                _ = int.TryParse(selectedItem.Content.ToString(), out _currentDegreeOfParallelismForFiles);
+                _ = int.TryParse(selectedItem.Content?.ToString(), out _currentDegreeOfParallelismForFiles);
             }
 
             var inputError = ValidateFolder(inputFolder, "input folder", true);
@@ -431,7 +455,7 @@ public partial class MainWindow : IDisposable
             }
 
             ResetOperationStats();
-            SetControlsState(false);
+            await SetControlsStateAsync(false);
             _operationTimer.Restart();
 
             LogMessage("Starting batch conversion process...");
@@ -472,7 +496,7 @@ public partial class MainWindow : IDisposable
                 _operationTimer.Stop();
                 UpdateProcessingTimeDisplay();
                 UpdateWriteSpeedDisplay(0);
-                SetControlsState(true);
+                await SetControlsStateAsync(true);
                 LogOperationSummary("convert", "Conversion");
             }
         }
@@ -495,13 +519,13 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private void SetControlsState(bool enabled)
+    private async Task SetControlsStateAsync(bool enabled)
     {
-        // Use Invoke (synchronous) to ensure UI updates complete before returning.
-        // This is important when called from background threads (e.g., Task.Run).
+        // Use InvokeAsync to prevent UI freeze while ensuring UI updates complete.
+        // This prevents deadlocks when called from background threads.
         try
         {
-            Dispatcher.Invoke(() =>
+            await Dispatcher.InvokeAsync(() =>
             {
                 MainTabControl.IsEnabled = enabled;
 
@@ -616,9 +640,10 @@ public partial class MainWindow : IDisposable
         {
             LogMessage("Preparing for batch conversion...");
 
-            var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
+            // Use Task.Run to prevent UI freeze when scanning large directories
+            var files = await Task.Run(() => Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
                 .Where(static file => AllSupportedInputExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
-                .ToArray();
+                .ToArray(), _cts.Token);
 
             _totalFilesToProcess = files.Length;
             UpdateStatsDisplay();
@@ -629,7 +654,7 @@ public partial class MainWindow : IDisposable
                 return;
             }
 
-            Dispatcher.Invoke(() =>
+            await Dispatcher.InvokeAsync(() =>
             {
                 ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
                 ProgressBar.Value = 0;
@@ -652,47 +677,56 @@ public partial class MainWindow : IDisposable
                     CancellationToken = _cts.Token
                 };
 
-                // Start aggregate speed monitoring task
-                var speedMonitoringCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                // Start aggregate speed monitoring task with proper disposal
+                using var speedMonitoringCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
                 var speedMonitorTask = MonitorAggregateWriteSpeedAsync(speedMonitoringCts.Token);
 
-                await Parallel.ForEachAsync(files, parallelOptions, async (inputFile, token) =>
-                {
-                    var fileName = Path.GetFileName(inputFile);
-                    LogMessage($"[Parallel] Starting: {fileName}");
-
-                    var success = await ProcessFileAsync(dolphinToolPath, inputFile, outputFolder, deleteFiles, true, token);
-
-                    if (success)
-                    {
-                        Interlocked.Increment(ref _successCount);
-                        LogMessage($"[Parallel] Successful: {fileName}");
-                    }
-                    else
-                    {
-                        Interlocked.Increment(ref _failureCount);
-                        LogMessage($"[Parallel] Failed: {fileName}");
-                    }
-
-                    // Remove from active progress AFTER incrementing counters to avoid progress bar jumping backwards
-                    _activeFileProgress.TryRemove(inputFile, out _);
-                    UpdateOverallProgress();
-
-                    var processed = Interlocked.Increment(ref filesProcessedCount);
-                    UpdateProgressDisplay(processed, _totalFilesToProcess, fileName, "Converting");
-                    UpdateStatsDisplay();
-                    UpdateProcessingTimeDisplay();
-                });
-
-                // Stop the aggregate speed monitoring
-                speedMonitoringCts.Cancel();
                 try
                 {
-                    await speedMonitorTask;
+                    await Parallel.ForEachAsync(files, parallelOptions, async (inputFile, token) =>
+                    {
+                        var fileName = Path.GetFileName(inputFile);
+                        LogMessage($"[Parallel] Starting: {fileName}");
+
+                        var success = await ProcessFileAsync(dolphinToolPath, inputFile, outputFolder, deleteFiles, true, token);
+
+                        if (success)
+                        {
+                            Interlocked.Increment(ref _successCount);
+                            LogMessage($"[Parallel] Successful: {fileName}");
+                        }
+                        else
+                        {
+                            Interlocked.Increment(ref _failureCount);
+                            LogMessage($"[Parallel] Failed: {fileName}");
+                        }
+
+                        // Remove from active progress AFTER incrementing counters to avoid progress bar jumping backwards
+                        lock (_progressLock)
+                        {
+                            _activeFileProgress.TryRemove(inputFile, out _);
+                        }
+
+                        UpdateOverallProgress();
+
+                        var processed = Interlocked.Increment(ref filesProcessedCount);
+                        UpdateProgressDisplay(processed, _totalFilesToProcess, fileName, "Converting");
+                        UpdateStatsDisplay();
+                        UpdateProcessingTimeDisplay();
+                    });
                 }
-                catch (OperationCanceledException)
+                finally
                 {
-                    // Expected when cancelling the monitoring task
+                    // Stop the aggregate speed monitoring and dispose
+                    speedMonitoringCts.Cancel();
+                    try
+                    {
+                        await speedMonitorTask;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when cancelling the monitoring task
+                    }
                 }
             }
             else
@@ -724,7 +758,11 @@ public partial class MainWindow : IDisposable
                     }
 
                     // Remove from active progress AFTER incrementing counters to avoid progress bar jumping backwards
-                    _activeFileProgress.TryRemove(t, out _);
+                    lock (_progressLock)
+                    {
+                        _activeFileProgress.TryRemove(t, out _);
+                    }
+
                     UpdateOverallProgress();
 
                     var processed = ++filesProcessedCount;
@@ -790,14 +828,14 @@ public partial class MainWindow : IDisposable
                     if (isArchiveFile)
                     {
                         // Wait for file handles to be released by OS/antivirus
-                        await Task.Delay(2000, CancellationToken.None);
-                        await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", CancellationToken.None);
+                        await Task.Delay(2000, cancellationToken);
+                        await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", cancellationToken);
                     }
                     else
                     {
                         // Wait for file handles to be released by OS/antivirus
-                        await Task.Delay(2000, CancellationToken.None);
-                        await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", CancellationToken.None);
+                        await Task.Delay(2000, cancellationToken);
+                        await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", cancellationToken);
                     }
                 }
 
@@ -811,14 +849,14 @@ public partial class MainWindow : IDisposable
             if (isArchiveFile)
             {
                 // Wait for file handles to be released by OS/antivirus
-                await Task.Delay(2000, CancellationToken.None);
-                await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", CancellationToken.None);
+                await Task.Delay(2000, cancellationToken);
+                await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", cancellationToken);
             }
             else
             {
                 // Wait for file handles to be released by OS/antivirus
-                await Task.Delay(2000, CancellationToken.None);
-                await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", CancellationToken.None);
+                await Task.Delay(2000, cancellationToken);
+                await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", cancellationToken);
             }
 
             return success;
@@ -864,6 +902,11 @@ public partial class MainWindow : IDisposable
         Interlocked.Increment(ref _activeConversionCount);
 
         using var process = new Process();
+
+        // Declare event handlers outside try block so they're accessible in finally block
+        DataReceivedEventHandler? outputHandler = null;
+        DataReceivedEventHandler? errorHandler = null;
+
         try
         {
             LogMessage($"Converting '{Path.GetFileName(inputFile)}' to '{Path.GetFileName(outputFile)}'...");
@@ -892,32 +935,36 @@ public partial class MainWindow : IDisposable
 
             process.EnableRaisingEvents = true;
 
-            var outputBuilder = new StringBuilder();
-            var errorBuilder = new StringBuilder();
+            // Use ConcurrentQueue for thread-safe output collection from event handlers
+            var outputQueue = new ConcurrentQueue<string>();
+            var errorQueue = new ConcurrentQueue<string>();
 
-            process.OutputDataReceived += (_, args) =>
+            // Store event handlers so we can remove them later to prevent memory leaks
+            outputHandler = (_, args) =>
             {
                 if (string.IsNullOrEmpty(args.Data)) return;
 
-                outputBuilder.AppendLine(args.Data);
+                outputQueue.Enqueue(args.Data);
                 if (!UpdateConversionProgress(args.Data, inputFile))
                 {
                     LogMessage($"[DolphinTool] {args.Data}");
                 }
             };
-            process.ErrorDataReceived += (_, args) =>
+            errorHandler = (_, args) =>
             {
                 if (string.IsNullOrEmpty(args.Data))
                 {
                     return;
                 }
 
-                errorBuilder.AppendLine(args.Data);
+                errorQueue.Enqueue(args.Data);
                 if (!UpdateConversionProgress(args.Data, inputFile))
                 {
                     LogMessage($"[DolphinTool ERROR] {args.Data}");
                 }
             };
+            process.OutputDataReceived += outputHandler;
+            process.ErrorDataReceived += errorHandler;
 
             process.Start();
             process.BeginOutputReadLine();
@@ -1017,6 +1064,12 @@ public partial class MainWindow : IDisposable
                 throw;
             }
 
+            // Drain queues to StringBuilder for logging
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+            while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
+            while (errorQueue.TryDequeue(out var line)) errorBuilder.AppendLine(line);
+
             LogMessage($"DolphinTool raw output for {Path.GetFileName(inputFile)}: {outputBuilder}");
             if (errorBuilder.Length > 0 && process.ExitCode != 0) LogMessage($"DolphinTool raw error for {Path.GetFileName(inputFile)}: {errorBuilder}");
 
@@ -1071,6 +1124,10 @@ public partial class MainWindow : IDisposable
         }
         finally
         {
+            // Remove event handlers to prevent memory leaks
+            process.OutputDataReceived -= outputHandler;
+            process.ErrorDataReceived -= errorHandler;
+
             // Decrement active conversion count
             Interlocked.Decrement(ref _activeConversionCount);
             // Only reset display if no more active conversions
@@ -1182,6 +1239,7 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Failed to clean up {description} {dirPath}: {ex.Message}");
+            await ReportBugAsync($"Error in TryDeleteDirectory: {description}", ex);
         }
     }
 
@@ -1430,11 +1488,30 @@ public partial class MainWindow : IDisposable
     private static async Task CopyStreamWithCancellationAsync(Stream input, Stream output, CancellationToken cancellationToken)
     {
         var buffer = new byte[81920]; // 80KB buffer
-        int bytesRead;
-        while ((bytesRead = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+        try
         {
-            await output.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
+            int bytesRead;
+            while ((bytesRead = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                await output.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            await output.FlushAsync(cancellationToken);
+        }
+        catch
+        {
+            // Ensure output is flushed before re-throwing
+            try
+            {
+                await output.FlushAsync(CancellationToken.None);
+            }
+            catch
+            {
+                // ignored
+            }
+
+            throw;
         }
     }
 
@@ -1454,7 +1531,11 @@ public partial class MainWindow : IDisposable
                 return false;
 
             // Store this file's progress and trigger an overall UI update
-            _activeFileProgress[fileName] = percentage;
+            lock (_progressLock)
+            {
+                _activeFileProgress[fileName] = percentage;
+            }
+
             UpdateOverallProgress();
 
             return true;
@@ -1502,13 +1583,12 @@ public partial class MainWindow : IDisposable
         return sb + "." + decimalPart;
     }
 
-    private MessageBoxResult ShowMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
+    private async Task<MessageBoxResult> ShowMessageBoxAsync(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
     {
         try
         {
-            // Use Application.Current.Dispatcher to ensure we're on the main UI thread.
-            // Dispatcher.Invoke will execute the delegate immediately if we're already on the UI thread.
-            return Application.Current.Dispatcher.Invoke(() =>
+            // Use Dispatcher.InvokeAsync to avoid potential deadlocks when called from async methods
+            return await Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 // Try to use this window as the owner only if it's still loaded and has a valid handle.
                 // This prevents "The calling thread cannot access this object" or "Invalid handle" errors
@@ -1550,6 +1630,14 @@ public partial class MainWindow : IDisposable
                 return MessageBoxResult.None;
             }
         }
+    }
+
+    // Synchronous wrapper for backward compatibility - uses InvokeAsync internally
+    private void ShowMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
+    {
+        // Use GetAwaiter().GetResult() is safe here because the async operation runs on the UI thread
+        // and we're just waiting for it to complete
+        ShowMessageBoxAsync(message, title, buttons, icon).GetAwaiter().GetResult();
     }
 
     private void ShowError(string message)
@@ -1658,7 +1746,7 @@ public partial class MainWindow : IDisposable
                               $"Release Notes:\n{latestRelease.Body}\n\n" +
                               "Would you like to go to the download page?";
 
-                var result = ShowMessageBox(message, "Update Available", MessageBoxButton.YesNo, MessageBoxImage.Information);
+                var result = await ShowMessageBoxAsync(message, "Update Available", MessageBoxButton.YesNo, MessageBoxImage.Information);
 
                 if (result == MessageBoxResult.Yes)
                 {
@@ -1670,7 +1758,7 @@ public partial class MainWindow : IDisposable
                 LogMessage("You are using the latest version.");
                 if (isManualCheck)
                 {
-                    ShowMessageBox("You are already using the latest version.", "No Updates Found", MessageBoxButton.OK, MessageBoxImage.Information);
+                    await ShowMessageBoxAsync("You are already using the latest version.", "No Updates Found", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
         }
@@ -1680,7 +1768,7 @@ public partial class MainWindow : IDisposable
             LogMessage(errorMessage);
             if (isManualCheck)
             {
-                ShowMessageBox($"An error occurred while checking for updates:\n{ex.Message}", "Update Check Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                await ShowMessageBoxAsync($"An error occurred while checking for updates:\n{ex.Message}", "Update Check Failed", MessageBoxButton.OK, MessageBoxImage.Error);
             }
 
             await ReportBugAsync("Failed to check for updates", ex);
@@ -1728,6 +1816,9 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    /// <summary>
+    /// Releases all resources used by the <see cref="MainWindow"/>.
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)
@@ -1737,7 +1828,11 @@ public partial class MainWindow : IDisposable
 
         _disposed = true;
 
-        _cts.Cancel();
+        if (!_cts.IsCancellationRequested)
+        {
+            _cts.Cancel();
+        }
+
         _cts.Dispose();
         _updateService.Dispose();
         _operationTimer.Stop();
@@ -1770,7 +1865,7 @@ public partial class MainWindow : IDisposable
             var maxConcurrency = 1;
             if (useParallelVerification && VerifyDegreeOfParallelismComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem selectedItem)
             {
-                _ = int.TryParse(selectedItem.Content.ToString(), out maxConcurrency);
+                _ = int.TryParse(selectedItem.Content?.ToString(), out maxConcurrency);
             }
 
             _moveFailedFiles = MoveFailedCheckBox.IsChecked ?? false;
@@ -1791,7 +1886,7 @@ public partial class MainWindow : IDisposable
             }
 
             ResetOperationStats();
-            SetControlsState(false);
+            await SetControlsStateAsync(false);
             _operationTimer.Restart();
 
             LogMessage("Starting batch verification process...");
@@ -1827,7 +1922,7 @@ public partial class MainWindow : IDisposable
             {
                 _operationTimer.Stop();
                 UpdateProcessingTimeDisplay();
-                SetControlsState(true);
+                await SetControlsStateAsync(true);
                 LogOperationSummary("verify", "Verification");
             }
         }
@@ -1843,9 +1938,10 @@ public partial class MainWindow : IDisposable
         {
             LogMessage("Preparing for batch verification...");
 
-            var files = Directory.GetFiles(verifyFolder, "*.*", SearchOption.TopDirectoryOnly)
+            // Use Task.Run to prevent UI freeze when scanning large directories
+            var files = await Task.Run(() => Directory.GetFiles(verifyFolder, "*.*", SearchOption.TopDirectoryOnly)
                 .Where(static file => RvzExtension.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
-                .ToArray();
+                .ToArray(), _cts.Token);
 
             _totalFilesToProcess = files.Length;
             UpdateStatsDisplay();
@@ -1856,7 +1952,7 @@ public partial class MainWindow : IDisposable
                 return;
             }
 
-            Dispatcher.Invoke(() =>
+            await Dispatcher.InvokeAsync(() =>
             {
                 ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
                 ProgressBar.Value = 0;
@@ -1931,6 +2027,10 @@ public partial class MainWindow : IDisposable
         string? tempWorkingDirectory = null;
         var wasCanceled = false; // NEW: Flag to track if cancellation occurred for this specific task
 
+        // Declare event handlers outside try block so they're accessible in finally block
+        DataReceivedEventHandler? outputHandler = null;
+        DataReceivedEventHandler? errorHandler = null;
+
         try
         {
             LogMessage($"Verifying: {fileName}...");
@@ -1953,21 +2053,24 @@ public partial class MainWindow : IDisposable
 
             process.EnableRaisingEvents = true;
 
-            var outputBuilder = new StringBuilder();
-            process.OutputDataReceived += (_, args) =>
+            // Use ConcurrentQueue for thread-safe output collection from event handlers
+            var outputQueue = new ConcurrentQueue<string>();
+            outputHandler = (_, args) =>
             {
                 if (string.IsNullOrEmpty(args.Data)) return;
 
-                outputBuilder.AppendLine(args.Data);
+                outputQueue.Enqueue(args.Data);
                 LogMessage($"[DolphinTool] {args.Data}");
             };
-            process.ErrorDataReceived += (_, args) =>
+            errorHandler = (_, args) =>
             {
                 if (string.IsNullOrEmpty(args.Data)) return;
 
-                outputBuilder.AppendLine(args.Data);
+                outputQueue.Enqueue(args.Data);
                 LogMessage($"[DolphinTool ERROR] {args.Data}");
             };
+            process.OutputDataReceived += outputHandler;
+            process.ErrorDataReceived += errorHandler;
 
             process.Start();
             process.BeginOutputReadLine();
@@ -1983,6 +2086,9 @@ public partial class MainWindow : IDisposable
                 throw;
             }
 
+            // Drain queue to build output string
+            var outputBuilder = new StringBuilder();
+            while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
             var output = outputBuilder.ToString();
             if (process.ExitCode == 0 && output.Contains("Problems Found: No"))
             {
@@ -2003,7 +2109,10 @@ public partial class MainWindow : IDisposable
 
             try
             {
-                process.Kill(true);
+                if (process is { HasExited: false })
+                {
+                    process.Kill(true);
+                }
             }
             catch
             {
@@ -2020,6 +2129,17 @@ public partial class MainWindow : IDisposable
         }
         finally
         {
+            // Remove event handlers to prevent memory leaks
+            if (outputHandler != null)
+            {
+                process.OutputDataReceived -= outputHandler;
+            }
+
+            if (errorHandler != null)
+            {
+                process.ErrorDataReceived -= errorHandler;
+            }
+
             // NEW: Only move files if the operation was NOT canceled for this specific file
             if (!wasCanceled)
             {
@@ -2068,8 +2188,20 @@ public partial class MainWindow : IDisposable
                 }
             }
 
-            File.Move(sourceFilePath, destinationFilePath);
-            LogMessage($"Moved '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder.");
+            // Use try-catch to handle race condition where file might be created between check and move
+            try
+            {
+                File.Move(sourceFilePath, destinationFilePath);
+                LogMessage($"Moved '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder.");
+            }
+            catch (IOException ioEx) when (ioEx.Message.Contains("already exists"))
+            {
+                // Race condition: file was created between our check and the move
+                LogMessage("Destination file appeared during move operation. Attempting to delete and retry...");
+                await TryDeleteFile(destinationFilePath, $"race-condition file in {subfolderName} folder", _cts.Token);
+                File.Move(sourceFilePath, destinationFilePath);
+                LogMessage($"Moved '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder after retry.");
+            }
         }
         catch (Exception ex)
         {
@@ -2304,10 +2436,12 @@ public partial class MainWindow : IDisposable
             if (CompressionLevelSlider.Value < range.Min)
             {
                 CompressionLevelSlider.Value = range.Min;
+                _rvzCompressionLevel = range.Min;
             }
             else if (CompressionLevelSlider.Value > range.Max)
             {
                 CompressionLevelSlider.Value = range.Max;
+                _rvzCompressionLevel = range.Max;
             }
         }
 
@@ -2337,7 +2471,14 @@ public partial class MainWindow : IDisposable
 
         if (selectedItem.Tag != null && int.TryParse(selectedItem.Tag.ToString(), out var blockSize))
         {
-            _rvzBlockSize = blockSize;
+            if (blockSize > 0)
+            {
+                _rvzBlockSize = blockSize;
+            }
+            else
+            {
+                LogMessage($"Warning: Invalid block size '{blockSize}' selected. Using default value.");
+            }
         }
     }
 

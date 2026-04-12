@@ -30,7 +30,7 @@
                         <Button.Content>
                             <StackPanel Orientation="Horizontal">
                                 <Image Source="pack://application:,,,/images/update.png" Width="16" Height="16" Margin="0,0,5,0" />
-                                <TextBlock Text="Updates" Foreground="#121518" VerticalAlignment="Center" />
+                                <TextBlock Text="Updates" Foreground="{StaticResource ButtonTextDarkBrush}" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button.Content>
                     </Button>
@@ -38,7 +38,7 @@
                         <Button.Content>
                             <StackPanel Orientation="Horizontal">
                                 <Image Source="pack://application:,,,/images/about.png" Width="16" Height="16" Margin="0,0,5,0" />
-                                <TextBlock Text="About" Foreground="#121518" VerticalAlignment="Center" />
+                                <TextBlock Text="About" Foreground="{StaticResource ButtonTextDarkBrush}" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button.Content>
                     </Button>
@@ -46,7 +46,7 @@
                         <Button.Content>
                             <StackPanel Orientation="Horizontal">
                                 <Image Source="pack://application:,,,/images/exit.png" Width="16" Height="16" Margin="0,0,5,0" />
-                                <TextBlock Text="Exit" Foreground="#121518" VerticalAlignment="Center" />
+                                <TextBlock Text="Exit" Foreground="{StaticResource ButtonTextDarkBrush}" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button.Content>
                     </Button>
@@ -209,25 +209,8 @@
             <!-- Log Viewer -->
             <Border Grid.Row="1" BorderBrush="{StaticResource TerminalBorderBrush}" BorderThickness="2" CornerRadius="4" Background="{StaticResource TerminalBackgroundBrush}">
                 <TextBox x:Name="LogViewer"
-                         AcceptsReturn="True"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Auto"
-                         VerticalAlignment="Stretch"
-                         VerticalContentAlignment="Top"
-                         IsReadOnly="True"
-                         Padding="10"
-                         FontFamily="Consolas"
-                         FontSize="13"
-                         Background="{StaticResource TerminalBackgroundBrush}"
-                         Foreground="{StaticResource TerminalForegroundBrush}"
-                         BorderThickness="0"
-                         TextWrapping="NoWrap"
-                         CaretBrush="{StaticResource TerminalForegroundBrush}"
-                         ToolTip="Application activity log">
-                    <TextBox.Effect>
-                        <DropShadowEffect ShadowDepth="0" Color="#39FF14" BlurRadius="2" Opacity="0.4"/>
-                    </TextBox.Effect>
-                </TextBox>
+                         Style="{StaticResource TerminalLogViewerStyle}"
+                         ToolTip="Application activity log" />
             </Border>
 
             <!-- Stats Panel -->
@@ -300,16 +283,9 @@
         <!-- Extraction Overlay -->
         <Grid x:Name="ExtractionOverlay"
               Grid.Row="0" Grid.RowSpan="3"
-              Background="#CC000000"
-              Visibility="Collapsed"
+              Style="{StaticResource ExtractionOverlayStyle}"
               Panel.ZIndex="100">
-            <Border Background="{StaticResource CardBackgroundBrush}"
-                    BorderBrush="{StaticResource PrimaryAccentBrush}"
-                    BorderThickness="2"
-                    CornerRadius="10"
-                    Padding="30"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center">
+            <Border Style="{StaticResource ExtractionOverlayBorderStyle}">
                 <StackPanel>
                     <TextBlock Text="Please wait"
                                FontSize="24"

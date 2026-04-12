@@ -23,6 +23,12 @@ public class StatsService : IDisposable
     private readonly string _applicationId;
     private readonly string _applicationVersion;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="StatsService"/> class.
+    /// </summary>
+    /// <param name="apiUrl">The URL of the Stats API.</param>
+    /// <param name="apiKey">The API key for authentication.</param>
+    /// <param name="applicationId">The unique identifier for the application.</param>
     public StatsService(string apiUrl, string apiKey, string applicationId)
     {
         _apiUrl = apiUrl;
@@ -55,12 +61,19 @@ public class StatsService : IDisposable
             var content = await response.Content.ReadAsStringAsync();
 
             // Provide specific details for common failures
-            if ((int)response.StatusCode == 429)
+            var statusCode = (int)response.StatusCode;
+            throw statusCode switch
             {
-                throw new HttpRequestException($"Stats API Rate Limit: This IP has already reported stats for '{_applicationId}' within the rate limit period (usually 1 hour).");
-            }
-
-            throw new HttpRequestException($"Stats API failed with status {response.StatusCode}: {content}");
+                429 => new HttpRequestException($"Stats API Rate Limit: This IP has already reported stats for '{_applicationId}' within the rate limit period (usually 1 hour)."),
+                400 => new HttpRequestException($"Stats API Bad Request (400): The request was malformed or missing required fields. Response: {content}"),
+                401 => new HttpRequestException("Stats API Unauthorized (401): Invalid or missing API key."),
+                403 => new HttpRequestException("Stats API Forbidden (403): API key does not have permission to access this resource."),
+                404 => new HttpRequestException($"Stats API Not Found (404): The requested endpoint '{_apiUrl}' does not exist."),
+                500 => new HttpRequestException($"Stats API Server Error (500): The server encountered an internal error. Response: {content}"),
+                502 => new HttpRequestException("Stats API Bad Gateway (502): The server received an invalid response from an upstream server."),
+                503 => new HttpRequestException($"Stats API Service Unavailable (503): The server is temporarily unavailable. Response: {content}"),
+                _ => new HttpRequestException($"Stats API failed with status {response.StatusCode}: {content}")
+            };
         }
     }
 
