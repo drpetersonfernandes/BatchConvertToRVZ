@@ -24,6 +24,7 @@ public partial class MainWindow : IDisposable
 {
     private bool _disposed;
     private volatile bool _isClosing;
+    private volatile bool _isShuttingDown;
     private Task? _runningTask;
     private bool _dependenciesOk;
     private string? _dolphinToolPath;
@@ -235,6 +236,8 @@ public partial class MainWindow : IDisposable
             if (_isClosing)
                 return;
 
+            _isShuttingDown = true;
+
             if (_runningTask is not { IsCompleted: false })
             {
                 // Ensure log processor is shut down
@@ -323,43 +326,51 @@ public partial class MainWindow : IDisposable
 
             if (batch.Count > 0)
             {
-                var combinedLogs = string.Join(Environment.NewLine, batch) + Environment.NewLine;
-                batch.Clear();
-
-                try
+                if (_isShuttingDown)
                 {
-                    if (Application.Current is null) return;
-
-                    await Application.Current.Dispatcher.InvokeAsync(() =>
-                    {
-                        if (_disposed) return;
-
-                        // Only scroll to end if the user is already at the bottom (or very close to it)
-                        // This allows users to scroll up to read previous logs without being snapped back
-                        var isAtBottom = LogViewer.VerticalOffset + LogViewer.ViewportHeight >= LogViewer.ExtentHeight - 10;
-
-                        LogViewer.AppendText(combinedLogs);
-
-                        // Efficiently clear log if it exceeds the limit to prevent UI freeze
-                        if (LogViewer.LineCount > MaxLogLines)
-                        {
-                            LogViewer.Clear();
-                            LogViewer.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] --- Log cleared (exceeded {MaxLogLines} lines) to prevent UI freeze ---{Environment.NewLine}");
-                            isAtBottom = true; // Always scroll to end after clear
-                        }
-
-                        if (isAtBottom)
-                        {
-                            LogViewer.ScrollToEnd();
-                        }
-                    }, System.Windows.Threading.DispatcherPriority.Background);
+                    // Skip UI updates during shutdown to prevent freeze
+                    batch.Clear();
                 }
-                catch (Exception ex)
+                else
                 {
-                    // Silently fail if the Dispatcher is shutting down, but report critical errors
-                    if (ex is not InvalidOperationException && ex is not TaskCanceledException)
+                    var combinedLogs = string.Join(Environment.NewLine, batch) + Environment.NewLine;
+                    batch.Clear();
+
+                    try
                     {
-                        _ = Task.Run(() => ReportBugAsync("Error in ProcessLogsAsync Dispatcher operation", ex));
+                        if (Application.Current is null) return;
+
+                        await Application.Current.Dispatcher.InvokeAsync(() =>
+                        {
+                            if (_disposed) return;
+
+                            // Only scroll to end if the user is already at the bottom (or very close to it)
+                            // This allows users to scroll up to read previous logs without being snapped back
+                            var isAtBottom = LogViewer.VerticalOffset + LogViewer.ViewportHeight >= LogViewer.ExtentHeight - 10;
+
+                            LogViewer.AppendText(combinedLogs);
+
+                            // Efficiently clear log if it exceeds the limit to prevent UI freeze
+                            if (LogViewer.LineCount > MaxLogLines)
+                            {
+                                LogViewer.Clear();
+                                LogViewer.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] --- Log cleared (exceeded {MaxLogLines} lines) to prevent UI freeze ---{Environment.NewLine}");
+                                isAtBottom = true; // Always scroll to end after clear
+                            }
+
+                            if (isAtBottom)
+                            {
+                                LogViewer.ScrollToEnd();
+                            }
+                        }, System.Windows.Threading.DispatcherPriority.Background);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Silently fail if the Dispatcher is shutting down, but report critical errors
+                        if (ex is not InvalidOperationException && ex is not TaskCanceledException)
+                        {
+                            _ = Task.Run(() => ReportBugAsync("Error in ProcessLogsAsync Dispatcher operation", ex));
+                        }
                     }
                 }
             }
@@ -1376,7 +1387,7 @@ public partial class MainWindow : IDisposable
             // After successful extraction (or if it wasn't cancelled during),
             // look for the target file.
             var supportedFile = Directory.GetFiles(tempDir, "*.*", SearchOption.AllDirectories)
-                .FirstOrDefault(static f => PrimaryTargetExtensionsInsideArchive.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase));
+                .FirstOrDefault(static f => HasSupportedGameExtension(f, PrimaryTargetExtensionsInsideArchive));
 
             if (supportedFile != null)
             {
