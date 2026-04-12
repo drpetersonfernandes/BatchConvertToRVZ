@@ -59,7 +59,9 @@ The application follows a modular architecture with clear separation of concerns
 | `MainWindow` | UI coordination, user interaction handling, operation orchestration |
 | `UpdateService` | GitHub API integration for checking application updates |
 | `BugReportService` | Automatic error reporting to development team |
+| `StatsService` | Statistics tracking for conversion and verification operations |
 | `GitHubRelease` | Data model for GitHub release information |
+| `SystemInfo` | System information data model |
 | `DolphinTool` | External tool for RVZ conversion and verification |
 | `SharpCompress` | Third-party library for archive extraction |
 
@@ -169,10 +171,15 @@ BatchConvertToRVZ/
 ├── App.xaml.cs              # Application entry point, global exception handling
 ├── MainWindow.xaml          # Main UI definition
 ├── MainWindow.xaml.cs       # Main UI logic and operation orchestration
-├── UpdateService.cs         # GitHub update checking service
-├── BugReportService.cs      # Automatic error reporting service
+├── AboutWindow.xaml         # About dialog UI
+├── AboutWindow.xaml.cs      # About dialog logic
+├── services/
+│   ├── UpdateService.cs     # GitHub update checking service
+│   ├── BugReportService.cs  # Automatic error reporting service
+│   └── StatsService.cs      # Statistics tracking service
 ├── models/
-│   └── GitHubRelease.cs     # GitHub API response model
+│   ├── GitHubRelease.cs     # GitHub API response model
+│   └── SystemInfo.cs        # System information model
 ├── icon/                    # Application icons
 ├── images/                  # UI images (menu icons, logo)
 └── DolphinTool*.exe         # External conversion/verification tool
