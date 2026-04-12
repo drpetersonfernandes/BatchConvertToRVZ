@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Batch Convert to RVZ"
-        Height="800" Width="1000" MinHeight="650" MinWidth="750"
+        Height="850" Width="1200" MinHeight="700" MinWidth="900"
         Closing="Window_Closing"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource WindowBackgroundBrush}">
@@ -56,19 +56,33 @@
 
         <!-- Main Content Area -->
         <Grid Grid.Row="1" Margin="15">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="300" />    <!-- 0: Left Column - Controls & Settings -->
+                <ColumnDefinition Width="5" />   <!-- 1: Grid Splitter -->
+                <ColumnDefinition Width="*" MinWidth="300" />   <!-- 2: Right Column - Log Viewer -->
+            </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" /> <!-- 0: TabControl -->
-                <RowDefinition Height="*" />    <!-- 1: LogViewer -->
-                <RowDefinition Height="Auto" /> <!-- 2: Stats Panel -->
-                <RowDefinition Height="Auto" /> <!-- 3: Progress Area -->
+                <RowDefinition Height="*" />      <!-- 0: Main Content -->
+                <RowDefinition Height="Auto" />   <!-- 1: Stats Panel -->
+                <RowDefinition Height="Auto" />   <!-- 2: Progress Area -->
             </Grid.RowDefinitions>
 
-            <TabControl Grid.Row="0" x:Name="MainTabControl" Margin="0,0,0,15" Background="Transparent" BorderThickness="0">
+            <TabControl Grid.Column="0" Grid.Row="0" x:Name="MainTabControl" Background="Transparent" BorderThickness="0" VerticalAlignment="Stretch">
                 <TabItem Header="Convert" ToolTip="Batch convert GameCube/Wii ISO images to RVZ">
-                    <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="0,0,6,6" Padding="15">
-                        <StackPanel>
+                    <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="0,0,6,6" Padding="15" VerticalAlignment="Stretch">
+                        <Grid VerticalAlignment="Stretch">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" /> <!-- Input -->
+                                <RowDefinition Height="Auto" /> <!-- Output -->
+                                <RowDefinition Height="Auto" /> <!-- Options -->
+                                <RowDefinition Height="Auto" /> <!-- Label -->
+                                <RowDefinition Height="*" />    <!-- DataGrid -->
+                                <RowDefinition Height="Auto" /> <!-- Buttons -->
+                                <RowDefinition Height="Auto" /> <!-- Start -->
+                            </Grid.RowDefinitions>
+
                             <!-- Input Folder Selection -->
-                            <Grid Margin="0,0,0,10">
+                            <Grid Grid.Row="0" Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="120" />
                                     <ColumnDefinition Width="*" />
@@ -80,7 +94,7 @@
                             </Grid>
 
                             <!-- Output Folder Selection -->
-                            <Grid Margin="0,0,0,10">
+                            <Grid Grid.Row="1" Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="120" />
                                     <ColumnDefinition Width="*" />
@@ -92,7 +106,7 @@
                             </Grid>
 
                             <!-- Options Grid -->
-                            <Grid>
+                            <Grid Grid.Row="2">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
@@ -102,15 +116,7 @@
                                 <GroupBox Grid.Column="0" Header="General Settings" Margin="0,5,5,10" Padding="10">
                                     <StackPanel>
                                         <CheckBox x:Name="DeleteFilesCheckBox" Content="Delete original files after conversion" Margin="0,5" HorizontalAlignment="Left" ToolTip="WARNING: Permanently deletes source files after successful conversion. Use with caution!" />
-                                        <CheckBox x:Name="ParallelProcessingCheckBox" Content="Enable parallel processing" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Process multiple files simultaneously to speed up conversion" />
 
-                                        <StackPanel Orientation="Horizontal" Margin="20,5,0,5" IsEnabled="{Binding ElementName=ParallelProcessingCheckBox, Path=IsChecked}">
-                                            <Label Content="Max concurrent:" VerticalAlignment="Center" ToolTip="Maximum number of simultaneous conversion tasks" />
-                                            <ComboBox x:Name="DegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" Margin="5,0,0,0" ToolTip="Maximum number of simultaneous conversion tasks">
-                                                <ComboBoxItem Content="2" />
-                                                <ComboBoxItem Content="3" />
-                                            </ComboBox>
-                                        </StackPanel>
                                     </StackPanel>
                                 </GroupBox>
 
@@ -140,7 +146,8 @@
                                                 <ColumnDefinition Width="30" />
                                             </Grid.ColumnDefinitions>
                                             <Label Content="Level:" VerticalAlignment="Center" ToolTip="Compression level" />
-                                            <Slider x:Name="CompressionLevelSlider" Grid.Column="1" VerticalAlignment="Center" Minimum="1" Maximum="22" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="CompressionLevelSlider_ValueChanged" ToolTip="Compression level (higher = better compression but slower)" />
+                                            <Slider x:Name="CompressionLevelSlider" Grid.Column="1" VerticalAlignment="Center" Minimum="1" Maximum="22" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="CompressionLevelSlider_ValueChanged"
+                                                    ToolTip="Compression level (higher = better compression but slower)" />
                                             <TextBlock x:Name="CompressionLevelValue" Grid.Column="2" Text="5" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="Bold" Foreground="{StaticResource PrimaryAccentBrush}" ToolTip="Current compression level" />
                                         </Grid>
 
@@ -164,16 +171,40 @@
                                 </GroupBox>
                             </Grid>
 
-                            <Button x:Name="StartConversionButton" Content="Start Conversion" Click="StartConversionButton_Click" Style="{StaticResource StartButtonStyle}" HorizontalAlignment="Center" Margin="0,5,0,0" ToolTip="Begin the batch conversion process" />
-                        </StackPanel>
+                            <Label Grid.Row="3" Content="Select Files to Convert:" Margin="0,5,0,0" FontWeight="Bold" />
+                            <Grid Grid.Row="4" Margin="0,5" VerticalAlignment="Stretch">
+                                <DataGrid x:Name="ConversionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" />
+                                        <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Size" Binding="{Binding DisplaySize}" Width="130" IsReadOnly="True" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
+                            <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,10">
+                                <Button Content="Select All" Click="SelectAllConversion_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
+                                <Button Content="Deselect All" Click="DeselectAllConversion_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
+                            </StackPanel>
+
+                            <Button Grid.Row="6" x:Name="StartConversionButton" Content="Start Conversion" Click="StartConversionButton_Click" Style="{StaticResource StartButtonStyle}" HorizontalAlignment="Stretch" ToolTip="Begin the batch conversion process" />
+                        </Grid>
                     </Border>
                 </TabItem>
 
                 <TabItem Header="Verify Integrity" ToolTip="Verify the integrity of existing RVZ files">
-                    <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="0,0,6,6" Padding="15">
-                        <StackPanel>
+                    <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="0,0,6,6" Padding="15" VerticalAlignment="Stretch">
+                        <Grid VerticalAlignment="Stretch">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" /> <!-- Input -->
+                                <RowDefinition Height="Auto" /> <!-- Options -->
+                                <RowDefinition Height="Auto" /> <!-- Label -->
+                                <RowDefinition Height="*" />    <!-- DataGrid -->
+                                <RowDefinition Height="Auto" /> <!-- Buttons -->
+                                <RowDefinition Height="Auto" /> <!-- Start -->
+                            </Grid.RowDefinitions>
+
                             <!-- Verify Folder Selection -->
-                            <Grid Margin="0,0,0,10">
+                            <Grid Grid.Row="0" Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="120" />
                                     <ColumnDefinition Width="*" />
@@ -184,37 +215,60 @@
                                 <Button x:Name="BrowseVerifyFolderButton" Grid.Column="2" Content="Browse..." Click="BrowseVerifyFolderButton_Click" Style="{StaticResource ActionButtonStyle}" ToolTip="Browse for the folder containing RVZ files to verify" />
                             </Grid>
 
-                            <GroupBox Header="General Settings" Margin="0,5,0,10" Padding="10">
+                            <GroupBox Grid.Row="1" Header="General Settings" Margin="0,5,0,10" Padding="10">
                                 <StackPanel>
-                                    <CheckBox x:Name="VerifyParallelProcessingCheckBox" Content="Enable parallel processing" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Verify multiple files simultaneously" />
-                                    <StackPanel Orientation="Horizontal" Margin="20,5,0,5" IsEnabled="{Binding ElementName=VerifyParallelProcessingCheckBox, Path=IsChecked}">
-                                        <Label Content="Max concurrent:" VerticalAlignment="Center" ToolTip="Maximum number of simultaneous verification tasks" />
-                                        <ComboBox x:Name="VerifyDegreeOfParallelismComboBox" Width="60" VerticalAlignment="Center" SelectedIndex="1" Margin="5,0,0,0" ToolTip="Maximum number of simultaneous verification tasks">
-                                            <ComboBoxItem Content="2" />
-                                            <ComboBoxItem Content="3" />
-                                        </ComboBox>
-                                    </StackPanel>
-
                                     <CheckBox x:Name="MoveFailedCheckBox" Content="Move failed RVZ files to '_Failed' subfolder" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Move files that fail verification to a separate folder" />
                                     <CheckBox x:Name="MoveSuccessCheckBox" Content="Move successful RVZ files to '_Success' subfolder" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Move successfully verified files to a separate folder" />
                                 </StackPanel>
                             </GroupBox>
 
-                            <Button x:Name="StartVerifyButton" Content="Start Verification" Click="StartVerifyButton_Click" Style="{StaticResource StartButtonStyle}" HorizontalAlignment="Center" Margin="0,5,0,0" ToolTip="Begin the verification process" />
-                        </StackPanel>
+                            <Label Grid.Row="2" Content="Select Files to Verify:" Margin="0,5,0,0" FontWeight="Bold" />
+                            <Grid Grid.Row="3" Margin="0,5" VerticalAlignment="Stretch">
+                                <DataGrid x:Name="VerificationFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" />
+                                        <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Size" Binding="{Binding DisplaySize}" Width="130" IsReadOnly="True" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
+                            <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,10">
+                                <Button Content="Select All" Click="SelectAllVerification_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
+                                <Button Content="Deselect All" Click="DeselectAllVerification_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
+                            </StackPanel>
+
+                            <Button Grid.Row="5" x:Name="StartVerifyButton" Content="Start Verification" Click="StartVerifyButton_Click" Style="{StaticResource StartButtonStyle}" HorizontalAlignment="Stretch" ToolTip="Begin the verification process" />
+                        </Grid>
                     </Border>
                 </TabItem>
             </TabControl>
 
+            <GridSplitter x:Name="Splitter" Grid.Column="1" Grid.Row="0" Width="5"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
+                          Background="{StaticResource BorderBrush}"
+                          ShowsPreview="True">
+                <GridSplitter.Style>
+                    <Style TargetType="GridSplitter">
+                        <Setter Property="Cursor" Value="SizeWE" />
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{StaticResource PrimaryAccentBrush}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </GridSplitter.Style>
+            </GridSplitter>
+
             <!-- Log Viewer -->
-            <Border Grid.Row="1" BorderBrush="{StaticResource TerminalBorderBrush}" BorderThickness="2" CornerRadius="4" Background="{StaticResource TerminalBackgroundBrush}">
+            <Border Grid.Column="2" Grid.Row="0" BorderBrush="{StaticResource TerminalBorderBrush}" BorderThickness="2" CornerRadius="4" Background="{StaticResource TerminalBackgroundBrush}">
                 <TextBox x:Name="LogViewer"
                          Style="{StaticResource TerminalLogViewerStyle}"
                          ToolTip="Application activity log" />
             </Border>
 
             <!-- Stats Panel -->
-            <Grid Grid.Row="2" Margin="0,15,0,0">
+            <Grid Grid.Column="0" Grid.ColumnSpan="3" Grid.Row="1" Margin="0,15,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
@@ -260,23 +314,37 @@
             </Grid>
 
             <!-- Progress Area -->
-            <Grid Grid.Row="3" Margin="0,15,0,0">
+            <Grid Grid.Column="0" Grid.ColumnSpan="3" Grid.Row="2" Margin="0,15,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0">
-                    <TextBlock x:Name="ProgressText" Margin="0,0,0,5" HorizontalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Current progress status" />
-                    <ProgressBar x:Name="ProgressBar" Height="20" ToolTip="Overall conversion/verification progress" />
-                </StackPanel>
-                <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Click="CancelButton_Click" Style="{StaticResource CancelButtonStyle}" Width="100" Margin="10,0,0,0" Visibility="Collapsed" VerticalAlignment="Bottom" ToolTip="Cancel the current operation" />
+                <Grid Grid.Column="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <!-- <TextBlock x:Name="ProgressText" Grid.Row="0" Margin="0,0,0,5" HorizontalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Current file progress status" /> -->
+                    <ProgressBar x:Name="FileProgressBar" Grid.Row="1" Height="20" Margin="0,0,0,10" ToolTip="Current file conversion/verification progress" />
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ProgressBar x:Name="ProgressBar" Grid.Column="1" Height="20" ToolTip="Overall batch progress (files processed / total files)" VerticalAlignment="Center" />
+                    </Grid>
+                </Grid>
+                <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Click="CancelButton_Click" Style="{StaticResource CancelButtonStyle}" Width="100" Margin="10,0,0,0" Visibility="Collapsed" VerticalAlignment="Center" ToolTip="Cancel the current operation" />
             </Grid>
         </Grid>
 
         <!-- Status Bar -->
         <StatusBar Grid.Row="2">
             <StatusBarItem>
-                <TextBlock Text="Ready" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Application status" />
+                <!-- <TextBlock x:Name="StatusBarText" Text="Ready" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Application status" /> -->
+                <TextBlock x:Name="ProgressText" Text="Ready" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Application status" />
             </StatusBarItem>
         </StatusBar>
 

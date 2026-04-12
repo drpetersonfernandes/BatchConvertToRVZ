@@ -22,7 +22,7 @@ Batch Convert to RVZ is a comprehensive Windows application that provides a user
 - **Supported Input Formats**: Handles GameCube and Wii disc images (`.iso`, `.gcm`, `.wbfs`, `.nkit.iso`) and archives containing them (`.zip`, `.7z`, `.rar`).
 - **Archive Extraction**: Automatically extracts and processes game files from ZIP, 7Z, and RAR archives using SharpCompress.
 - **Configurable Compression**: Customize compression method, level, and block size for optimal results.
-- **Parallel Processing**: Process multiple files concurrently (up to 3 files) to speed up batch completion.
+
 - **Smart File Handling**: Skips files that already exist in the output directory.
 - **Delete Original Option**: Optionally remove source files (including archives) after successful conversion.
 - **Robust Parsing**: Advanced logic for handling compound extensions like `.nkit.iso` and localized number formats.
@@ -31,7 +31,7 @@ Batch Convert to RVZ is a comprehensive Windows application that provides a user
 - **RVZ Integrity Verification**: Verify the integrity of existing RVZ files using DolphinTool.
 - **Real-time Feedback**: Live logging of DolphinTool verification output (not just at the end).
 - **Batch Verification**: Check multiple RVZ files in a single operation.
-- **Parallel Verification**: Verify multiple RVZ files concurrently (up to 3 files).
+
 - **File Organization**: Automatically move verified files to `_Success` or `_Failed` subfolders.
 - **Detailed Reporting**: Get comprehensive verification results for each file.
 
@@ -99,8 +99,7 @@ The application follows a modular architecture with clear separation of concerns
 2. **Select Output Folder**: Click "Browse" next to "Output Folder" to choose where the RVZ files will be saved.
 3. **Configure General Settings**:
    - Check "Delete original files after conversion" to remove source files after successful conversion.
-   - Check "Enable parallel processing" to convert multiple files concurrently (recommended for faster processing).
-   - Set "Max concurrent files" (2-3) based on your system's capabilities.
+
 4. **Configure Compression Settings**:
    - **Method**: Choose compression algorithm (zstd, zlib, lzma, lzma2, bzip2, lz4).
    - **Level**: Adjust compression level (varies by method, e.g., 1-22 for zstd).
@@ -114,7 +113,7 @@ The application follows a modular architecture with clear separation of concerns
 1. **Switch to Verify Tab**: Click the "Verify Integrity" tab.
 2. **Select Verify Folder**: Click "Browse" to select the folder containing RVZ files to verify.
 3. **Configure Options**:
-   - Check "Enable parallel processing" to verify multiple files concurrently (up to 3).
+
    - Check "Move failed RVZ files to '_Failed' subfolder" to organize problematic files.
    - Check "Move successful RVZ files to '_Success' subfolder" to organize verified files.
 4. **Start Verification**: Click "Start Verification" to begin checking file integrity with real-time feedback.
