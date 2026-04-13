@@ -202,24 +202,24 @@ public class ConversionService
             try
             {
                 bool success;
-                
+
                 // If the extracted file is already an RVZ, just copy it directly to the output folder
                 if (isRvzFile)
                 {
                     var fileName = Path.GetFileName(extractedFilePath);
                     var outputFile = Path.Combine(outputFolder, fileName);
-                    
+
                     _logMessage($"Found RVZ file inside archive, copying directly: {fileName}");
-                    
+
                     try
                     {
                         // Ensure the output directory exists
                         Directory.CreateDirectory(outputFolder);
-                        
+
                         // Copy the file
                         File.Copy(extractedFilePath, outputFile, true);
                         _logMessage($"Successfully copied RVZ file from archive: {fileName}");
-                        
+
                         success = true;
                     }
                     catch (Exception ex)
@@ -277,7 +277,6 @@ public class ConversionService
         CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileName(inputFile);
-        var inputExtension = Path.GetExtension(inputFile).ToLowerInvariant();
         var outputFileName = _fileService.GetBaseFileNameWithoutGameExtension(fileName) + ".rvz";
         var outputFile = Path.Combine(outputFolder, outputFileName);
 
@@ -287,7 +286,7 @@ public class ConversionService
             if (_fileService.IsRvzFile(inputFile))
             {
                 _logMessage($"File is already in RVZ format, copying: {fileName} -> {outputFileName}");
-                
+
                 try
                 {
                     // Ensure the output directory exists
@@ -296,13 +295,13 @@ public class ConversionService
                     // Copy the file
                     File.Copy(inputFile, outputFile, true);
                     _logMessage($"Successfully copied RVZ file: {fileName}");
-                    
+
                     // Delete original if requested
                     if (deleteOriginal)
                     {
                         await TryDeleteFile(inputFile, "original file");
                     }
-                    
+
                     return true;
                 }
                 catch (Exception ex)
@@ -484,7 +483,7 @@ public class ConversionService
             }
 
             // Determine if the extracted file is an RVZ
-            bool isRvzFile = rvzExtensions.Any(ext => 
+            var isRvzFile = rvzExtensions.Any(ext =>
                 entry.Key?.EndsWith(ext, StringComparison.OrdinalIgnoreCase) == true);
 
             // Extract the file name from the entry key, handling potential directory separators
@@ -516,6 +515,7 @@ public class ConversionService
             {
                 _logMessage($"Extracted {entryName} from archive.");
             }
+
             return (true, extractedFilePath, tempDir, string.Empty, isRvzFile);
         }
         catch (Exception ex)
