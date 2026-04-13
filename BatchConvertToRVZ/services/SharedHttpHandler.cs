@@ -13,7 +13,7 @@ public static class SharedHttpHandler
     private static readonly Lazy<SocketsHttpHandler> Handler = new(static () => new SocketsHttpHandler
     {
         PooledConnectionLifetime = TimeSpan.FromMinutes(2)
-    });
+    }, LazyThreadSafetyMode.ExecutionAndPublication);
 
     /// <summary>
     /// Gets the shared SocketsHttpHandler instance.

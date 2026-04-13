@@ -26,6 +26,8 @@ public partial class MainWindow : IDisposable
     private bool _dependenciesOk;
     private string? _dolphinToolPath;
     private CancellationTokenSource _cts;
+    private readonly object _ctsLock = new();
+    private readonly object _closingLock = new();
     private readonly services.UpdateService _updateService;
     private readonly services.ConversionService _conversionService;
     private readonly services.VerificationService _verificationService;
@@ -58,6 +60,7 @@ public partial class MainWindow : IDisposable
     private int _failureCount;
     private readonly Stopwatch _operationTimer = new();
     private System.Windows.Threading.DispatcherTimer? _processingTimeUpdateTimer;
+    private readonly object _statsLock = new();
 
     // Write speed calculation
     private long _totalBytesProcessed;
@@ -88,12 +91,23 @@ public partial class MainWindow : IDisposable
     {
         try
         {
-            if (_totalFilesToProcess == 0) return;
+            int totalToProcess;
+            int successCount;
+            int failureCount;
+
+            lock (_statsLock)
+            {
+                if (_totalFilesToProcess == 0) return;
+
+                totalToProcess = _totalFilesToProcess;
+                successCount = _successCount;
+                failureCount = _failureCount;
+            }
 
             Dispatcher.BeginInvoke(() =>
             {
-                var completed = _successCount + _failureCount;
-                ProgressBar.Value = Math.Min(completed, _totalFilesToProcess);
+                var completed = successCount + failureCount;
+                ProgressBar.Value = Math.Min(completed, totalToProcess);
             });
         }
         catch (TaskCanceledException)
@@ -207,7 +221,17 @@ public partial class MainWindow : IDisposable
             var errorMessage = $"Unsupported platform architecture. {ex.Message}";
             LogMessage($"ERROR: {errorMessage}");
             ShowError(errorMessage);
-            Task.Run(() => ReportBugAsync($"Unsupported platform: {ex.Message}", ex));
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ReportBugAsync($"Unsupported platform: {ex.Message}", ex);
+                }
+                catch
+                {
+                    /* Silently ignore */
+                }
+            });
             _dependenciesOk = false;
             StartConversionButton.IsEnabled = false;
             StartVerifyButton.IsEnabled = false;
@@ -224,7 +248,17 @@ public partial class MainWindow : IDisposable
             var errorMessage = $"The following critical file(s) are missing: {missingFilesString}.\n\nThe application cannot function without them. Please ensure all files from the release archive are in the same folder as this application.";
             LogMessage($"WARNING: {errorMessage.ReplaceLineEndings(" ")}");
             ShowError(errorMessage);
-            Task.Run(() => ReportBugAsync($"Missing critical files: {missingFilesString}"));
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ReportBugAsync($"Missing critical files: {missingFilesString}");
+                }
+                catch
+                {
+                    /* Silently ignore */
+                }
+            });
         }
         else
         {
@@ -232,7 +266,12 @@ public partial class MainWindow : IDisposable
             StartConversionButton.IsEnabled = true;
             StartVerifyButton.IsEnabled = true;
             StartExtractionButton.IsEnabled = true;
-            LogMessage($"{dolphinToolExeName} found in the application directory.");
+
+            if (!string.IsNullOrEmpty(dolphinToolExeName))
+            {
+                LogMessage($"{dolphinToolExeName} found in the application directory.");
+            }
+
             LogMessage("SharpCompress library loaded for archive extraction.");
         }
 
@@ -266,27 +305,36 @@ public partial class MainWindow : IDisposable
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
-        if (_isClosing)
-            return;
-
-        _isShuttingDown = true;
-        _logChannel.Writer.TryComplete();
-
-        if (_runningTask is not { IsCompleted: false })
+        lock (_closingLock)
         {
-            // No operation running — allow close immediately
-            return;
-        }
+            if (_isClosing)
+            {
+                e.Cancel = true;
+                return;
+            }
 
-        // An operation is running: cancel it and close once it stops
-        e.Cancel = true;
-        _isClosing = true;
+            _isShuttingDown = true;
+            _logChannel.Writer.TryComplete();
+
+            if (_runningTask is not { IsCompleted: false })
+            {
+                // No operation running — allow close immediately
+                return;
+            }
+
+            // An operation is running: cancel it and close once it stops
+            e.Cancel = true;
+            _isClosing = true;
+        }
 
         _ = Task.Run(async () =>
         {
             try
             {
-                await _cts.CancelAsync();
+                lock (_ctsLock)
+                {
+                    _cts.Cancel();
+                }
 
                 // Wait up to 5 seconds for the running task to finish
                 await Task.WhenAny(_runningTask, Task.Delay(5000));
@@ -376,7 +424,17 @@ public partial class MainWindow : IDisposable
                         // Silently fail if the Dispatcher is shutting down, but report critical errors
                         if (ex is not InvalidOperationException && ex is not TaskCanceledException)
                         {
-                            _ = Task.Run(() => ReportBugAsync("Error in ProcessLogsAsync Dispatcher operation", ex));
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await ReportBugAsync("Error in ProcessLogsAsync Dispatcher operation", ex);
+                                }
+                                catch
+                                {
+                                    /* Silently ignore */
+                                }
+                            });
                         }
                     }
                 }
@@ -409,7 +467,7 @@ public partial class MainWindow : IDisposable
             _conversionFiles.Clear();
 
             var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(file => Enumerable.Contains(_fileService.GetAllSupportedInputExtensions(), Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
+                .Where(file => _fileService.IsSupportedInputFile(file))
                 .ToArray();
 
             foreach (var file in files)
@@ -430,7 +488,17 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error populating file list: {ex.Message}");
-            _ = Task.Run(() => ReportBugAsync("Error populating conversion file list", ex));
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ReportBugAsync("Error populating conversion file list", ex);
+                }
+                catch
+                {
+                    /* Silently ignore */
+                }
+            });
         }
     }
 
@@ -447,6 +515,14 @@ public partial class MainWindow : IDisposable
     {
         try
         {
+            // Prevent starting multiple operations simultaneously
+            if (_currentOperation != OperationType.None)
+            {
+                LogMessage($"Error: Cannot start conversion while a {_currentOperation.ToString().ToLowerInvariant()} operation is in progress.");
+                ShowError($"Please wait for the current {_currentOperation.ToString().ToLowerInvariant()} operation to complete before starting a new one.");
+                return;
+            }
+
             if (!_dependenciesOk || string.IsNullOrEmpty(_dolphinToolPath))
             {
                 var exeName = GetDolphinToolExecutableName();
@@ -514,10 +590,16 @@ public partial class MainWindow : IDisposable
                 return;
             }
 
-            if (_cts.IsCancellationRequested)
+            CancellationToken token;
+            lock (_ctsLock)
             {
-                _cts.Dispose();
-                _cts = new CancellationTokenSource();
+                // Always refresh the token source for a fresh start using proper disposal pattern
+                using (_cts)
+                {
+                    _cts = new CancellationTokenSource();
+                }
+
+                token = _cts.Token;
             }
 
             ResetOperationStats();
@@ -538,7 +620,7 @@ public partial class MainWindow : IDisposable
             var wasCancelled = false;
             try
             {
-                _runningTask = Task.Run(() => PerformBatchConversionAsync(_dolphinToolPath, selectedFiles, outputFolder, deleteFiles), _cts.Token);
+                _runningTask = Task.Run(() => PerformBatchConversionAsync(_dolphinToolPath, selectedFiles, outputFolder, deleteFiles, token), token);
 
                 await _runningTask.ConfigureAwait(false); // resume on thread pool, not UI thread
             }
@@ -578,7 +660,11 @@ public partial class MainWindow : IDisposable
 
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
-        _cts.Cancel();
+        lock (_ctsLock)
+        {
+            _cts.Cancel();
+        }
+
         LogMessage("Cancellation requested. Waiting for current operation(s) to complete...");
 
         // Show appropriate overlay text based on current operation type
@@ -737,21 +823,37 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task PerformBatchConversionAsync(string dolphinToolPath, string[] files, string outputFolder, bool deleteFiles)
+    private async Task PerformBatchConversionAsync(string dolphinToolPath, string[] files, string outputFolder, bool deleteFiles, CancellationToken token)
     {
         try
         {
             ResetOperationStats();
-            _totalFilesToProcess = files.Length;
+
+            lock (_statsLock)
+            {
+                _totalFilesToProcess = files.Length;
+            }
+
+            int totalFiles;
+            lock (_statsLock)
+            {
+                totalFiles = _totalFilesToProcess;
+            }
 
             await Dispatcher.InvokeAsync(() =>
             {
                 FileProgressBar.IsIndeterminate = true;
                 FileProgressBar.Value = 0;
-                ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
+                ProgressBar.Maximum = Math.Max(totalFiles, 1);
                 ProgressBar.Value = 0;
             });
 
+            lock (_speedLock)
+            {
+                _speedCalculationStartTime = DateTime.Now;
+            }
+
+            // Use the local token variable captured inside the lock for thread safety
             await _conversionService.PerformBatchConversionAsync(
                 dolphinToolPath,
                 files,
@@ -775,9 +877,21 @@ public partial class MainWindow : IDisposable
 
                     CalculateAndUpdateWriteSpeed();
                 },
-                count => Interlocked.Add(ref _successCount, count),
-                count => Interlocked.Add(ref _failureCount, count),
-                _cts.Token);
+                count =>
+                {
+                    lock (_statsLock)
+                    {
+                        _successCount += count;
+                    }
+                },
+                count =>
+                {
+                    lock (_statsLock)
+                    {
+                        _failureCount += count;
+                    }
+                },
+                token);
         }
         catch (OperationCanceledException)
         {
@@ -966,7 +1080,17 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error opening About window: {ex.Message}");
-            Task.Run(() => ReportBugAsync("Error opening About window", ex));
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ReportBugAsync("Error opening About window", ex);
+                }
+                catch
+                {
+                    /* Silently ignore */
+                }
+            });
         }
     }
 
@@ -1104,29 +1228,42 @@ public partial class MainWindow : IDisposable
 
         _disposed = true;
 
+        // Signal shutdown to ensure log processor exits quickly
+        _isShuttingDown = true;
+
         // Complete the log channel to signal the log processor to exit
         _logChannel.Writer.TryComplete();
 
-        // Wait briefly for the log processor to finish (non-blocking)
+        // Wait for the log processor to finish with a reasonable timeout
         if (_logProcessorTask is { IsCompleted: false })
         {
             try
             {
-                // Use a short timeout to avoid hanging
-                _logProcessorTask.Wait(TimeSpan.FromMilliseconds(500));
+                // Use a longer timeout to ensure all pending logs are processed
+                // but don't block indefinitely
+                _logProcessorTask.Wait(TimeSpan.FromSeconds(5));
+            }
+            catch (AggregateException ex) when (ex.InnerException is OperationCanceledException or TaskCanceledException)
+            {
+                // Expected during shutdown
             }
             catch
             {
-                // Ignore any exceptions during shutdown
+                // Ignore any other exceptions during shutdown
             }
         }
 
-        if (!_cts.IsCancellationRequested)
+        lock (_ctsLock)
         {
-            _cts.Cancel();
+            using (_cts)
+            {
+                if (!_cts.IsCancellationRequested)
+                {
+                    _cts.Cancel();
+                }
+            }
         }
 
-        _cts.Dispose();
         _updateService.Dispose();
         _operationTimer.Stop();
         GC.SuppressFinalize(this);
@@ -1150,7 +1287,7 @@ public partial class MainWindow : IDisposable
             _verificationFiles.Clear();
 
             var files = Directory.GetFiles(verifyFolder, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(file => Enumerable.Contains(_fileService.GetRvzExtensions(), Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
+                .Where(file => _fileService.IsRvzFile(file))
                 .ToArray();
 
             foreach (var file in files)
@@ -1171,7 +1308,17 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error populating verification file list: {ex.Message}");
-            _ = Task.Run(() => ReportBugAsync("Error populating verification file list", ex));
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ReportBugAsync("Error populating verification file list", ex);
+                }
+                catch
+                {
+                    /* Silently ignore */
+                }
+            });
         }
     }
 
@@ -1211,6 +1358,14 @@ public partial class MainWindow : IDisposable
     {
         try
         {
+            // Prevent starting multiple operations simultaneously
+            if (_currentOperation != OperationType.None)
+            {
+                LogMessage($"Error: Cannot start verification while a {_currentOperation.ToString().ToLowerInvariant()} operation is in progress.");
+                ShowError($"Please wait for the current {_currentOperation.ToString().ToLowerInvariant()} operation to complete before starting a new one.");
+                return;
+            }
+
             if (!_dependenciesOk || string.IsNullOrEmpty(_dolphinToolPath))
             {
                 var exeName = GetDolphinToolExecutableName();
@@ -1240,10 +1395,16 @@ public partial class MainWindow : IDisposable
                 return;
             }
 
-            if (_cts.IsCancellationRequested)
+            CancellationToken token;
+            lock (_ctsLock)
             {
-                _cts.Dispose();
-                _cts = new CancellationTokenSource();
+                // Always refresh the token source for a fresh start using proper disposal pattern
+                using (_cts)
+                {
+                    _cts = new CancellationTokenSource();
+                }
+
+                token = _cts.Token;
             }
 
             ResetOperationStats();
@@ -1261,7 +1422,7 @@ public partial class MainWindow : IDisposable
             if (_moveSuccessFiles) LogMessage("Successful files will be moved to '_Success' subfolder.");
 
             var wasCancelled = false;
-            _runningTask = Task.Run(() => PerformBatchVerificationAsync(_dolphinToolPath, selectedFiles, _moveFailedFiles, _moveSuccessFiles), _cts.Token);
+            _runningTask = Task.Run(() => PerformBatchVerificationAsync(_dolphinToolPath, selectedFiles, _moveFailedFiles, _moveSuccessFiles, token), token);
 
             try
             {
@@ -1306,21 +1467,37 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task PerformBatchVerificationAsync(string dolphinToolPath, string[] files, bool moveFailed, bool moveSuccess)
+    private async Task PerformBatchVerificationAsync(string dolphinToolPath, string[] files, bool moveFailed, bool moveSuccess, CancellationToken token)
     {
         try
         {
             ResetOperationStats();
-            _totalFilesToProcess = files.Length;
+
+            lock (_statsLock)
+            {
+                _totalFilesToProcess = files.Length;
+            }
+
+            int totalFiles;
+            lock (_statsLock)
+            {
+                totalFiles = _totalFilesToProcess;
+            }
 
             await Dispatcher.InvokeAsync(() =>
             {
                 FileProgressBar.IsIndeterminate = true;
                 FileProgressBar.Value = 0;
-                ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
+                ProgressBar.Maximum = Math.Max(totalFiles, 1);
                 ProgressBar.Value = 0;
             });
 
+            lock (_speedLock)
+            {
+                _speedCalculationStartTime = DateTime.Now;
+            }
+
+            // Use the local token variable captured inside the lock for thread safety
             await _verificationService.PerformBatchVerificationAsync(
                 dolphinToolPath,
                 files,
@@ -1341,9 +1518,21 @@ public partial class MainWindow : IDisposable
 
                     CalculateAndUpdateWriteSpeed();
                 },
-                count => Interlocked.Add(ref _successCount, count),
-                count => Interlocked.Add(ref _failureCount, count),
-                _cts.Token);
+                count =>
+                {
+                    lock (_statsLock)
+                    {
+                        _successCount += count;
+                    }
+                },
+                count =>
+                {
+                    lock (_statsLock)
+                    {
+                        _failureCount += count;
+                    }
+                },
+                token);
         }
         catch (OperationCanceledException)
         {
@@ -1367,9 +1556,13 @@ public partial class MainWindow : IDisposable
 
     private void ResetOperationStats()
     {
-        _totalFilesToProcess = 0;
-        _successCount = 0;
-        _failureCount = 0;
+        lock (_statsLock)
+        {
+            _totalFilesToProcess = 0;
+            _successCount = 0;
+            _failureCount = 0;
+        }
+
         _operationTimer.Reset();
         _processingTimeUpdateTimer?.Stop();
 
@@ -1424,11 +1617,22 @@ public partial class MainWindow : IDisposable
     {
         try
         {
+            int totalFiles;
+            int successCount;
+            int failureCount;
+
+            lock (_statsLock)
+            {
+                totalFiles = _totalFilesToProcess;
+                successCount = _successCount;
+                failureCount = _failureCount;
+            }
+
             Dispatcher.BeginInvoke(() =>
             {
-                TotalFilesValue.Text = _totalFilesToProcess.ToString(CultureInfo.InvariantCulture);
-                SuccessValue.Text = _successCount.ToString(CultureInfo.InvariantCulture);
-                FailedValue.Text = _failureCount.ToString(CultureInfo.InvariantCulture);
+                TotalFilesValue.Text = totalFiles.ToString(CultureInfo.InvariantCulture);
+                SuccessValue.Text = successCount.ToString(CultureInfo.InvariantCulture);
+                FailedValue.Text = failureCount.ToString(CultureInfo.InvariantCulture);
             });
         }
         catch (TaskCanceledException)
@@ -1505,18 +1709,29 @@ public partial class MainWindow : IDisposable
 
     private async Task LogOperationSummaryAsync(string operationVerb, string operationNoun)
     {
+        int totalFiles;
+        int successCount;
+        int failureCount;
+
+        lock (_statsLock)
+        {
+            totalFiles = _totalFilesToProcess;
+            successCount = _successCount;
+            failureCount = _failureCount;
+        }
+
         LogMessage("");
         LogMessage($"--- Batch {operationNoun} completed. ---");
-        LogMessage($"Total files processed: {_totalFilesToProcess}");
-        LogMessage($"Successfully {GetPastTense(operationVerb)}: {_successCount} files");
-        if (_failureCount > 0) LogMessage($"Failed to {operationVerb}: {_failureCount} files");
+        LogMessage($"Total files processed: {totalFiles}");
+        LogMessage($"Successfully {GetPastTense(operationVerb)}: {successCount} files");
+        if (failureCount > 0) LogMessage($"Failed to {operationVerb}: {failureCount} files");
 
         await ShowMessageBoxAsync($"Batch {operationNoun} completed.\n\n" +
-                                  $"Total files processed: {_totalFilesToProcess}\n" +
-                                  $"Successfully {GetPastTense(operationVerb)}: {_successCount} files\n" +
-                                  $"Failed: {_failureCount} files",
+                                  $"Total files processed: {totalFiles}\n" +
+                                  $"Successfully {GetPastTense(operationVerb)}: {successCount} files\n" +
+                                  $"Failed: {failureCount} files",
             $"{operationNoun} Complete", MessageBoxButton.OK,
-            _failureCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+            failureCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
     }
 
     private static string GetPastTense(string verb)
@@ -1578,6 +1793,28 @@ public partial class MainWindow : IDisposable
         if (CompressionLevelValue == null) return;
 
         var level = (int)e.NewValue;
+
+        // Validate level is within allowed range for the selected compression method
+        if (CompressionMethodComboBox?.SelectedItem is System.Windows.Controls.ComboBoxItem selectedItem)
+        {
+            var method = selectedItem.Tag?.ToString() ?? "zstd";
+
+            if (CompressionLevelRanges.TryGetValue(method, out var range))
+            {
+                // Ensure level is within valid range
+                if (level < range.Min)
+                {
+                    level = range.Min;
+                    CompressionLevelSlider.Value = level;
+                }
+                else if (level > range.Max)
+                {
+                    level = range.Max;
+                    CompressionLevelSlider.Value = level;
+                }
+            }
+        }
+
         _rvzCompressionLevel = level;
         CompressionLevelValue.Text = level.ToString(CultureInfo.InvariantCulture);
     }
@@ -1592,13 +1829,15 @@ public partial class MainWindow : IDisposable
 
         if (selectedItem.Tag != null && int.TryParse(selectedItem.Tag.ToString(), out var blockSize))
         {
-            if (blockSize > 0)
+            // Add upper bound check (2MB) based on the defined values in the combo box
+            if (blockSize is > 0 and <= 2097152)
             {
                 _rvzBlockSize = blockSize;
             }
             else
             {
                 LogMessage($"Warning: Invalid block size '{blockSize}' selected. Using default value.");
+                _rvzBlockSize = 131072; // Default to 128KB
             }
         }
     }
@@ -1623,7 +1862,7 @@ public partial class MainWindow : IDisposable
             _extractionFiles.Clear();
 
             var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(static file => file.EndsWith(".rvz", StringComparison.OrdinalIgnoreCase))
+                .Where(file => _fileService.IsRvzFile(file))
                 .ToArray();
 
             foreach (var file in files)
@@ -1644,7 +1883,17 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error populating extraction file list: {ex.Message}");
-            _ = Task.Run(() => ReportBugAsync("Error populating extraction file list", ex));
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ReportBugAsync("Error populating extraction file list", ex);
+                }
+                catch
+                {
+                    /* Silently ignore */
+                }
+            });
         }
     }
 
@@ -1677,6 +1926,14 @@ public partial class MainWindow : IDisposable
     {
         try
         {
+            // Prevent starting multiple operations simultaneously
+            if (_currentOperation != OperationType.None)
+            {
+                LogMessage($"Error: Cannot start extraction while a {_currentOperation.ToString().ToLowerInvariant()} operation is in progress.");
+                ShowError($"Please wait for the current {_currentOperation.ToString().ToLowerInvariant()} operation to complete before starting a new one.");
+                return;
+            }
+
             if (!_dependenciesOk || string.IsNullOrEmpty(_dolphinToolPath))
             {
                 var exeName = GetDolphinToolExecutableName();
@@ -1742,10 +1999,16 @@ public partial class MainWindow : IDisposable
                 return;
             }
 
-            if (_cts.IsCancellationRequested)
+            CancellationToken token;
+            lock (_ctsLock)
             {
-                _cts.Dispose();
-                _cts = new CancellationTokenSource();
+                // Always refresh the token source for a fresh start using proper disposal pattern
+                using (_cts)
+                {
+                    _cts = new CancellationTokenSource();
+                }
+
+                token = _cts.Token;
             }
 
             ResetOperationStats();
@@ -1765,7 +2028,7 @@ public partial class MainWindow : IDisposable
             var wasCancelled = false;
             try
             {
-                _runningTask = Task.Run(() => PerformBatchExtractionAsync(_dolphinToolPath, selectedFiles, outputFolder, deleteFiles, outputFormat), _cts.Token);
+                _runningTask = Task.Run(() => PerformBatchExtractionAsync(_dolphinToolPath, selectedFiles, outputFolder, deleteFiles, outputFormat, token), token);
 
                 await _runningTask.ConfigureAwait(false);
             }
@@ -1803,21 +2066,37 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task PerformBatchExtractionAsync(string dolphinToolPath, string[] files, string outputFolder, bool deleteFiles, string outputFormat)
+    private async Task PerformBatchExtractionAsync(string dolphinToolPath, string[] files, string outputFolder, bool deleteFiles, string outputFormat, CancellationToken token)
     {
         try
         {
             ResetOperationStats();
-            _totalFilesToProcess = files.Length;
+
+            lock (_statsLock)
+            {
+                _totalFilesToProcess = files.Length;
+            }
+
+            int totalFiles;
+            lock (_statsLock)
+            {
+                totalFiles = _totalFilesToProcess;
+            }
 
             await Dispatcher.InvokeAsync(() =>
             {
                 FileProgressBar.IsIndeterminate = true;
                 FileProgressBar.Value = 0;
-                ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
+                ProgressBar.Maximum = Math.Max(totalFiles, 1);
                 ProgressBar.Value = 0;
             });
 
+            lock (_speedLock)
+            {
+                _speedCalculationStartTime = DateTime.Now;
+            }
+
+            // Use the local token variable captured inside the lock for thread safety
             await _extractionService.PerformBatchExtractionAsync(
                 dolphinToolPath,
                 files,
@@ -1839,9 +2118,21 @@ public partial class MainWindow : IDisposable
 
                     CalculateAndUpdateWriteSpeed();
                 },
-                count => Interlocked.Add(ref _successCount, count),
-                count => Interlocked.Add(ref _failureCount, count),
-                _cts.Token);
+                count =>
+                {
+                    lock (_statsLock)
+                    {
+                        _successCount += count;
+                    }
+                },
+                count =>
+                {
+                    lock (_statsLock)
+                    {
+                        _failureCount += count;
+                    }
+                },
+                token);
         }
         catch (OperationCanceledException)
         {
@@ -1979,8 +2270,7 @@ public partial class MainWindow : IDisposable
                 if (fileList.Count > 0)
                 {
                     LogMessage($"Dropped {fileList.Count} file(s) for {target}.");
-                    // TODO: Add support for adding individual files to the lists
-                    ShowMessageBox("Individual file drop is not yet implemented. Please drop a folder containing your files.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                    AddIndividualFilesToList(fileList, target);
                 }
             }
         }
@@ -1988,6 +2278,121 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Error handling dropped files: {ex.Message}");
             ShowError($"Error processing dropped files: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Adds individual files to the appropriate file list based on the target.
+    /// </summary>
+    /// <param name="files">The list of file paths to add.</param>
+    /// <param name="target">The target list ("conversion", "verification", or "extraction").</param>
+    private void AddIndividualFilesToList(List<string> files, string target)
+    {
+        try
+        {
+            // Filter files by supported extensions based on target
+            var filteredFiles = target switch
+            {
+                "conversion" => files.Where(file => _fileService.IsSupportedInputFile(file)),
+                "verification" => files.Where(file => _fileService.IsRvzFile(file)),
+                "extraction" => files.Where(file => _fileService.IsSupportedExtractionInputFile(file)),
+                _ => files
+            };
+
+            var fileArray = filteredFiles.ToArray();
+            if (fileArray.Length == 0)
+            {
+                ShowMessageBox("No supported files were found in the drop. Please check file extensions.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            // Get the appropriate list and determine the common parent directory
+            var fileList = target switch
+            {
+                "conversion" => _conversionFiles,
+                "verification" => _verificationFiles,
+                "extraction" => _extractionFiles,
+                _ => null
+            };
+
+            if (fileList == null) return;
+
+            // Find common parent directory for the text box display
+            string? commonDirectory = null;
+            if (fileArray.Length > 0)
+            {
+                commonDirectory = Path.GetDirectoryName(fileArray[0]);
+                for (var i = 1; i < fileArray.Length && !string.IsNullOrEmpty(commonDirectory); i++)
+                {
+                    var dir = Path.GetDirectoryName(fileArray[i]);
+                    while (!string.IsNullOrEmpty(dir) && !string.IsNullOrEmpty(commonDirectory) && !fileArray[i].StartsWith(commonDirectory, StringComparison.OrdinalIgnoreCase))
+                    {
+                        commonDirectory = Path.GetDirectoryName(commonDirectory);
+                    }
+                }
+            }
+
+            // Update the text box with the common directory or indicate multiple locations
+            var textBox = target switch
+            {
+                "conversion" => InputFolderTextBox,
+                "verification" => VerifyFolderTextBox,
+                "extraction" => ExtractInputFolderTextBox,
+                _ => null
+            };
+
+            textBox?.Text = commonDirectory ?? "(Multiple locations)";
+
+            // Add files to the list (skip duplicates)
+            var addedCount = 0;
+            var existingPaths = fileList.Select(static f => f.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var file in fileArray)
+            {
+                if (existingPaths.Contains(file))
+                {
+                    continue;
+                }
+
+                var fileInfo = new FileInfo(file);
+                fileList.Add(new Models.FileItem
+                {
+                    FileName = Path.GetFileName(file),
+                    FullPath = file,
+                    FileSize = fileInfo.Length,
+                    IsSelected = true
+                });
+                addedCount++;
+            }
+
+            // Refresh the DataGrid binding
+            switch (target)
+            {
+                case "conversion":
+                    ConversionFilesDataGrid.ItemsSource = _conversionFiles;
+                    break;
+                case "verification":
+                    VerificationFilesDataGrid.ItemsSource = _verificationFiles;
+                    break;
+                case "extraction":
+                    ExtractionFilesDataGrid.ItemsSource = _extractionFiles;
+                    break;
+            }
+
+            var skippedCount = fileArray.Length - addedCount;
+            if (skippedCount > 0)
+            {
+                LogMessage($"Added {addedCount} file(s) to {target} list. {skippedCount} file(s) were already in the list.");
+            }
+            else
+            {
+                LogMessage($"Added {addedCount} file(s) to {target} list.");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error adding individual files: {ex.Message}");
+            ShowError($"Error adding files: {ex.Message}");
         }
     }
 

@@ -32,6 +32,15 @@ public class ExtractionService
         _fileService = fileService;
     }
 
+    // Valid output formats for extraction
+    private static readonly HashSet<string> ValidOutputFormats = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "iso",
+        "wbfs",
+        "gcz",
+        "wia"
+    };
+
     /// <summary>
     /// Performs batch extraction of RVZ files to ISO format.
     /// </summary>
@@ -55,6 +64,13 @@ public class ExtractionService
         Action<int> incrementFailure,
         CancellationToken cancellationToken)
     {
+        // Validate output format
+        if (!ValidOutputFormats.Contains(outputFormat))
+        {
+            _logMessage($"Error: Invalid output format '{outputFormat}'. Valid formats are: {string.Join(", ", ValidOutputFormats)}");
+            return;
+        }
+
         try
         {
             _logMessage("Preparing for batch extraction...");
@@ -257,10 +273,10 @@ public class ExtractionService
 
             var extractedFilePath = Path.Combine(tempDir, entryName);
 
-            await using (var source = await entry.OpenEntryStreamAsync(cancellationToken))
+            await using (var source = await entry.OpenEntryStreamAsync(cancellationToken).ConfigureAwait(false))
             await using (var destination = File.Create(extractedFilePath))
             {
-                await source.CopyToAsync(destination, cancellationToken);
+                await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
             }
 
             _logMessage($"Extracted {entryName} from archive.");
@@ -376,6 +392,7 @@ public class ExtractionService
             process.EnableRaisingEvents = true;
 
             var outputQueue = new ConcurrentQueue<string>();
+            var errorQueue = new ConcurrentQueue<string>();
             var outputCompleted = new TaskCompletionSource<bool>();
             var errorCompleted = new TaskCompletionSource<bool>();
 
@@ -400,7 +417,7 @@ public class ExtractionService
                 }
                 else
                 {
-                    outputQueue.Enqueue(args.Data);
+                    errorQueue.Enqueue(args.Data);
                     _logMessage($"[DolphinTool ERROR] {args.Data}");
                 }
             };
@@ -415,7 +432,10 @@ public class ExtractionService
             var outputBuilder = new StringBuilder();
             while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
             var output = outputBuilder.ToString();
-            var error = string.Empty;
+
+            var errorBuilder = new StringBuilder();
+            while (errorQueue.TryDequeue(out var line)) errorBuilder.AppendLine(line);
+            var error = errorBuilder.ToString();
 
             // Success check: exit code 0 AND file exists
             if (process.ExitCode == 0)

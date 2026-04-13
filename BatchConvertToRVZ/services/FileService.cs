@@ -91,8 +91,8 @@ public class FileService
     /// <returns>true if the file is an archive; otherwise, false.</returns>
     public bool IsArchiveFile(string filePath)
     {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return ArchiveExtensions.Contains(extension);
+        var extension = Path.GetExtension(filePath);
+        return ArchiveExtensions.Any(ext => ext.Equals(extension, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -105,15 +105,16 @@ public class FileService
     {
         var fileName = Path.GetFileName(filePath);
 
-        // Check for compound extensions first (e.g., .nkit.iso) - must be checked before simple extensions
-        if (fileName.EndsWith(".nkit.iso", StringComparison.OrdinalIgnoreCase))
+        // Check for compound extensions first (e.g., .nkit.iso, .nkit.gcz) - must be checked before simple extensions
+        if (fileName.EndsWith(".nkit.iso", StringComparison.OrdinalIgnoreCase) ||
+            fileName.EndsWith(".nkit.gcz", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
         // Check for simple extensions
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return AllSupportedInputExtensions.Contains(extension);
+        var extension = Path.GetExtension(filePath);
+        return AllSupportedInputExtensions.Any(ext => ext.Equals(extension, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -123,8 +124,8 @@ public class FileService
     /// <returns>true if the file is a supported extraction input; otherwise, false.</returns>
     public bool IsSupportedExtractionInputFile(string filePath)
     {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return ExtractionInputExtensions.Contains(extension);
+        var extension = Path.GetExtension(filePath);
+        return ExtractionInputExtensions.Any(ext => ext.Equals(extension, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -134,17 +135,36 @@ public class FileService
     /// <returns>true if the file is an RVZ; otherwise, false.</returns>
     public bool IsRvzFile(string filePath)
     {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return RvzExtension.Contains(extension);
+        var extension = Path.GetExtension(filePath);
+        return RvzExtension.Any(ext => ext.Equals(extension, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Gets files from a folder that match the specified extensions.
+    /// </summary>
+    /// <param name="folderPath">The folder path to search.</param>
+    /// <param name="extensions">The file extensions to filter by.</param>
+    /// <param name="recursive">Whether to search recursively in subdirectories.</param>
+    /// <returns>Array of file paths matching the extensions.</returns>
     public string[] GetFilesFromFolder(string folderPath, string[] extensions, bool recursive = false)
     {
         try
         {
             var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
             var files = Directory.GetFiles(folderPath, "*.*", searchOption)
-                .Where(file => extensions.Contains(Path.GetExtension(file).ToLowerInvariant()))
+                .Where(file =>
+                {
+                    var fileName = Path.GetFileName(file);
+                    var extension = Path.GetExtension(file);
+
+                    // Check for compound extensions first (e.g., .nkit.iso)
+                    if (fileName.EndsWith(".nkit.iso", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return extensions.Any(static ext => ext.Equals(".nkit.iso", StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    return extensions.Any(ext => ext.Equals(extension, StringComparison.OrdinalIgnoreCase));
+                })
                 .ToArray();
 
             return files;
@@ -156,6 +176,13 @@ public class FileService
         }
     }
 
+    /// <summary>
+    /// Attempts to delete a file asynchronously.
+    /// </summary>
+    /// <param name="filePath">The file path to delete.</param>
+    /// <param name="description">Description of the file for logging purposes.</param>
+    /// <param name="cancellationToken">Cancellation token to cancel the operation.</param>
+    /// <returns>true if the file was successfully deleted; otherwise, false.</returns>
     public async Task<bool> TryDeleteFileAsync(string filePath, string description, CancellationToken cancellationToken)
     {
         try
@@ -191,6 +218,13 @@ public class FileService
         }
     }
 
+    /// <summary>
+    /// Attempts to delete a directory asynchronously.
+    /// </summary>
+    /// <param name="dirPath">The directory path to delete.</param>
+    /// <param name="description">Description of the directory for logging purposes.</param>
+    /// <param name="cancellationToken">Cancellation token to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     public async Task TryDeleteDirectoryAsync(string dirPath, string description, CancellationToken cancellationToken = default)
     {
         try
@@ -220,6 +254,14 @@ public class FileService
         }
     }
 
+    /// <summary>
+    /// Moves a file to a subfolder asynchronously.
+    /// </summary>
+    /// <param name="sourceFilePath">The source file path to move.</param>
+    /// <param name="baseFolder">The base folder containing the subfolder.</param>
+    /// <param name="subfolderName">The name of the subfolder to move the file to.</param>
+    /// <param name="cancellationToken">Cancellation token to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     public async Task MoveFileToSubfolderAsync(string sourceFilePath, string baseFolder, string subfolderName, CancellationToken cancellationToken = default)
     {
         try
@@ -264,6 +306,11 @@ public class FileService
         }
     }
 
+    /// <summary>
+    /// Gets the size of a file in bytes.
+    /// </summary>
+    /// <param name="filePath">The file path.</param>
+    /// <returns>The file size in bytes, or 0 if the file doesn't exist or an error occurs.</returns>
     public long GetFileSize(string filePath)
     {
         try
@@ -276,56 +323,110 @@ public class FileService
         }
     }
 
+    /// <summary>
+    /// Determines whether the specified file exists.
+    /// </summary>
+    /// <param name="filePath">The file path to check.</param>
+    /// <returns>true if the file exists; otherwise, false.</returns>
     public bool FileExists(string filePath)
     {
         return File.Exists(filePath);
     }
 
+    /// <summary>
+    /// Determines whether the specified directory exists.
+    /// </summary>
+    /// <param name="directoryPath">The directory path to check.</param>
+    /// <returns>true if the directory exists; otherwise, false.</returns>
     public bool DirectoryExists(string directoryPath)
     {
         return Directory.Exists(directoryPath);
     }
 
+    /// <summary>
+    /// Gets the file name from the specified path.
+    /// </summary>
+    /// <param name="filePath">The file path.</param>
+    /// <returns>The file name including the extension.</returns>
     public string GetFileName(string filePath)
     {
         return Path.GetFileName(filePath);
     }
 
+    /// <summary>
+    /// Gets the file name without the extension from the specified path.
+    /// </summary>
+    /// <param name="filePath">The file path.</param>
+    /// <returns>The file name without the extension.</returns>
     public string GetFileNameWithoutExtension(string filePath)
     {
         return Path.GetFileNameWithoutExtension(filePath);
     }
 
+    /// <summary>
+    /// Gets the extension of the specified file path.
+    /// </summary>
+    /// <param name="filePath">The file path.</param>
+    /// <returns>The file extension including the leading dot.</returns>
     public string GetExtension(string filePath)
     {
         return Path.GetExtension(filePath);
     }
 
+    /// <summary>
+    /// Gets the directory name from the specified path.
+    /// </summary>
+    /// <param name="filePath">The file path.</param>
+    /// <returns>The directory name, or empty string if the path doesn't contain directory information.</returns>
     public string GetDirectoryName(string filePath)
     {
         return Path.GetDirectoryName(filePath) ?? string.Empty;
     }
 
+    /// <summary>
+    /// Combines multiple path components into a single path.
+    /// </summary>
+    /// <param name="paths">An array of path components to combine.</param>
+    /// <returns>The combined path.</returns>
     public string CombinePaths(params string[] paths)
     {
         return Path.Combine(paths);
     }
 
+    /// <summary>
+    /// Changes the extension of the specified file path.
+    /// </summary>
+    /// <param name="filePath">The file path to change the extension for.</param>
+    /// <param name="newExtension">The new file extension.</param>
+    /// <returns>The file path with the new extension.</returns>
     public string ChangeExtension(string filePath, string newExtension)
     {
         return Path.ChangeExtension(filePath, newExtension);
     }
 
+    /// <summary>
+    /// Gets the path of the temporary folder for the current system.
+    /// </summary>
+    /// <returns>The path to the temporary folder.</returns>
     public string GetTempPath()
     {
         return Path.GetTempPath();
     }
 
+    /// <summary>
+    /// Gets a random file name.
+    /// </summary>
+    /// <returns>A random file name.</returns>
     public string GetRandomFileName()
     {
         return Path.GetRandomFileName();
     }
 
+    /// <summary>
+    /// Creates a temporary directory with an optional prefix.
+    /// </summary>
+    /// <param name="prefix">The prefix for the temporary directory name. Defaults to "BatchConvertToRVZ_Temp_".</param>
+    /// <returns>The path to the created temporary directory.</returns>
     public string CreateTempDirectory(string prefix = "BatchConvertToRVZ_Temp_")
     {
         var tempDir = Path.Combine(GetTempPath(), prefix + GetRandomFileName());
@@ -333,10 +434,6 @@ public class FileService
         return tempDir;
     }
 
-    /// <summary>
-    /// Gets the base file name without game image extensions.
-    /// Handles compound extensions like .nkit.iso correctly.
-    /// </summary>
     /// <summary>
     /// Gets the base file name without game image extensions.
     /// Handles compound extensions like .nkit.iso correctly.

@@ -1,8 +1,8 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Threading.Channels;
 using SharpCompress.Archives;
 
 namespace BatchConvertToRVZ.services;
@@ -318,7 +318,11 @@ public class ConversionService
 
             process.EnableRaisingEvents = true;
 
-            var outputQueue = new ConcurrentQueue<string>();
+            // Bounded channel prevents unbounded memory growth if reader is slower than producer
+            var outputChannel = Channel.CreateBounded<string>(new BoundedChannelOptions(1000)
+            {
+                FullMode = BoundedChannelFullMode.Wait
+            });
             var outputCompleted = new TaskCompletionSource<bool>();
             var errorCompleted = new TaskCompletionSource<bool>();
 
@@ -330,7 +334,7 @@ public class ConversionService
                 }
                 else
                 {
-                    outputQueue.Enqueue(args.Data);
+                    outputChannel.Writer.TryWrite(args.Data);
                     _logMessage($"[DolphinTool] {args.Data}");
                 }
             };
@@ -343,7 +347,7 @@ public class ConversionService
                 }
                 else
                 {
-                    outputQueue.Enqueue(args.Data);
+                    outputChannel.Writer.TryWrite(args.Data);
                     _logMessage($"[DolphinTool ERROR] {args.Data}");
                 }
             };
@@ -355,8 +359,14 @@ public class ConversionService
             await process.WaitForExitAsync(cancellationToken);
             await Task.WhenAll(outputCompleted.Task, errorCompleted.Task);
 
+            outputChannel.Writer.Complete();
+
             var outputBuilder = new StringBuilder();
-            while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
+            await foreach (var line in outputChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                outputBuilder.AppendLine(line);
+            }
+
             var output = outputBuilder.ToString();
             if (process.ExitCode == 0)
             {
@@ -417,10 +427,10 @@ public class ConversionService
 
             var extractedFilePath = Path.Combine(tempDir, entryName);
 
-            await using (var source = await entry.OpenEntryStreamAsync(cancellationToken))
+            await using (var source = await entry.OpenEntryStreamAsync(cancellationToken).ConfigureAwait(false))
             await using (var destination = File.Create(extractedFilePath))
             {
-                await source.CopyToAsync(destination, cancellationToken);
+                await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
             }
 
             _logMessage($"Extracted {entryName} from archive.");

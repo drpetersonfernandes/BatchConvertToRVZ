@@ -69,7 +69,7 @@ public class VerificationService
 
                 var fileName = Path.GetFileName(inputFile);
                 var baseFolder = Path.GetDirectoryName(inputFile) ?? string.Empty;
-                var success = await VerifyRzvFileAsync(
+                var success = await VerifyRvzFileAsync(
                     dolphinToolPath,
                     inputFile,
                     baseFolder,
@@ -102,7 +102,7 @@ public class VerificationService
         }
     }
 
-    private async Task<bool> VerifyRzvFileAsync(
+    private async Task<bool> VerifyRvzFileAsync(
         string dolphinToolPath,
         string inputFile,
         string baseFolder,
@@ -229,16 +229,10 @@ public class VerificationService
                 process.ErrorDataReceived -= errorHandler;
             }
 
-            try
+            // Use async cleanup without blocking the thread
+            if (tempWorkingDirectory != null)
             {
-                if (tempWorkingDirectory != null && Directory.Exists(tempWorkingDirectory))
-                {
-                    Directory.Delete(tempWorkingDirectory, true);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logMessage($"Failed to clean up temp directory: {ex.Message}");
+                _ = Task.Run(async () => await DeleteDirectoryAsync(tempWorkingDirectory), token);
             }
         }
 
@@ -286,6 +280,27 @@ public class VerificationService
         catch (Exception ex)
         {
             _logMessage($"Failed to move file to {subfolderName} folder: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously deletes a directory and all its contents.
+    /// </summary>
+    /// <param name="path">The path of the directory to delete.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    private static async Task DeleteDirectoryAsync(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                // Use Task.Run to make the synchronous Directory.Delete async
+                await Task.Run(() => Directory.Delete(path, true));
+            }
+        }
+        catch (Exception)
+        {
+            // Silently ignore cleanup errors
         }
     }
 }
