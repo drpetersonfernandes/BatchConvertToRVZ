@@ -83,9 +83,19 @@ public class FileService
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (File.Exists(filePath))
             {
-                await Task.Run(() => File.Delete(filePath), cancellationToken);
+                // File.Delete is synchronous and doesn't support cancellation directly
+                // We can only check cancellation before and after the operation
+                await Task.Run(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    File.Delete(filePath);
+                    cancellationToken.ThrowIfCancellationRequested();
+                }, cancellationToken);
+
                 _logMessage($"Deleted {description}: {Path.GetFileName(filePath)}");
                 return true;
             }
@@ -94,6 +104,7 @@ public class FileService
         }
         catch (OperationCanceledException)
         {
+            _logMessage($"Delete operation cancelled for {description}: {Path.GetFileName(filePath)}");
             throw;
         }
         catch (Exception ex)
@@ -103,15 +114,28 @@ public class FileService
         }
     }
 
-    public async Task TryDeleteDirectoryAsync(string dirPath, string description)
+    public async Task TryDeleteDirectoryAsync(string dirPath, string description, CancellationToken cancellationToken = default)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (Directory.Exists(dirPath))
             {
-                await Task.Run(() => Directory.Delete(dirPath, true));
+                await Task.Run(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Directory.Delete(dirPath, true);
+                    cancellationToken.ThrowIfCancellationRequested();
+                }, cancellationToken);
+
                 _logMessage($"Deleted {description}");
             }
+        }
+        catch (OperationCanceledException)
+        {
+            _logMessage($"Delete directory operation cancelled for {description}");
+            throw;
         }
         catch (Exception ex)
         {
@@ -119,10 +143,12 @@ public class FileService
         }
     }
 
-    public async Task MoveFileToSubfolderAsync(string sourceFilePath, string baseFolder, string subfolderName)
+    public async Task MoveFileToSubfolderAsync(string sourceFilePath, string baseFolder, string subfolderName, CancellationToken cancellationToken = default)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var fileName = Path.GetFileName(sourceFilePath);
             var subfolderPath = Path.Combine(baseFolder, subfolderName);
 
@@ -141,8 +167,19 @@ public class FileService
                 destinationPath = Path.Combine(subfolderPath, $"{nameWithoutExt}_{timestamp}{extension}");
             }
 
-            await Task.Run(() => File.Move(sourceFilePath, destinationPath));
+            await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Move(sourceFilePath, destinationPath);
+                cancellationToken.ThrowIfCancellationRequested();
+            }, cancellationToken);
+
             _logMessage($"Moved {fileName} to {subfolderName} folder.");
+        }
+        catch (OperationCanceledException)
+        {
+            _logMessage($"Move file operation cancelled for {Path.GetFileName(sourceFilePath)}");
+            throw;
         }
         catch (Exception ex)
         {

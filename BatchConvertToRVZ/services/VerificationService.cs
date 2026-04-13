@@ -142,15 +142,7 @@ public class VerificationService
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            try
-            {
-                await process.WaitForExitAsync(token);
-            }
-            catch (OperationCanceledException)
-            {
-                if (!process.HasExited) process.Kill(true);
-                throw;
-            }
+            await process.WaitForExitAsync(token);
 
             var outputBuilder = new StringBuilder();
             while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
@@ -216,7 +208,7 @@ public class VerificationService
         return verificationResult;
     }
 
-    private async Task MoveFileToSubfolder(string sourceFilePath, string baseFolder, string subfolderName)
+    private Task MoveFileToSubfolder(string sourceFilePath, string baseFolder, string subfolderName)
     {
         try
         {
@@ -245,5 +237,7 @@ public class VerificationService
         {
             _logMessage($"Failed to move file to {subfolderName} folder: {ex.Message}");
         }
+
+        return Task.CompletedTask;
     }
 }
