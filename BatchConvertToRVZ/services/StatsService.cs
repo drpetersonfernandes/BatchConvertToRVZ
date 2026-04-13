@@ -11,11 +11,11 @@ namespace BatchConvertToRVZ.services;
 public class StatsService : IDisposable
 {
     // Shared static HttpClient handler to prevent socket exhaustion.
-    // Not disposed explicitly — lives for the app lifetime and is cleaned up by the finalizer on exit.
-    private static readonly SocketsHttpHandler SharedHandler = new()
+    // Properly disposed when the application exits.
+    private static readonly Lazy<SocketsHttpHandler> SharedHandler = new(static () => new SocketsHttpHandler
     {
         PooledConnectionLifetime = TimeSpan.FromMinutes(2)
-    };
+    });
 
     private readonly HttpClient _httpClient;
     private readonly string _apiUrl;
@@ -36,7 +36,7 @@ public class StatsService : IDisposable
         _applicationId = applicationId;
         _applicationVersion = GetApplicationVersion();
 
-        _httpClient = new HttpClient(SharedHandler, false);
+        _httpClient = new HttpClient(SharedHandler.Value, false);
 
         // Use Bearer token for authentication as required by the Stats API
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
@@ -88,5 +88,17 @@ public class StatsService : IDisposable
     {
         _httpClient.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Disposes the shared handler when the application exits.
+    /// Call this method during application shutdown.
+    /// </summary>
+    public static void DisposeSharedHandler()
+    {
+        if (SharedHandler.IsValueCreated)
+        {
+            SharedHandler.Value.Dispose();
+        }
     }
 }

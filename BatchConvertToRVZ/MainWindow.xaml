@@ -173,9 +173,9 @@
 
                             <Label Grid.Row="3" Content="Select Files to Convert:" Margin="0,5,0,0" FontWeight="Bold" />
                             <Grid Grid.Row="4" Margin="0,5" VerticalAlignment="Stretch">
-                                <DataGrid x:Name="ConversionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                                <DataGrid x:Name="ConversionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader">
                                     <DataGrid.Columns>
-                                        <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" />
+                                        <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" IsThreeState="False" />
                                         <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" IsReadOnly="True" />
                                         <DataGridTextColumn Header="Size" Binding="{Binding DisplaySize}" Width="130" IsReadOnly="True" />
                                     </DataGrid.Columns>
@@ -224,9 +224,9 @@
 
                             <Label Grid.Row="2" Content="Select Files to Verify:" Margin="0,5,0,0" FontWeight="Bold" />
                             <Grid Grid.Row="3" Margin="0,5" VerticalAlignment="Stretch">
-                                <DataGrid x:Name="VerificationFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                                <DataGrid x:Name="VerificationFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader">
                                     <DataGrid.Columns>
-                                        <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" />
+                                        <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" IsThreeState="False" />
                                         <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" IsReadOnly="True" />
                                         <DataGridTextColumn Header="Size" Binding="{Binding DisplaySize}" Width="130" IsReadOnly="True" />
                                     </DataGrid.Columns>
@@ -325,7 +325,6 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <!-- <TextBlock x:Name="ProgressText" Grid.Row="0" Margin="0,0,0,5" HorizontalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Current file progress status" /> -->
                     <ProgressBar x:Name="FileProgressBar" Grid.Row="1" Height="20" Margin="0,0,0,10" ToolTip="Current file conversion/verification progress" />
                     <Grid Grid.Row="2">
                         <Grid.ColumnDefinitions>
@@ -343,7 +342,6 @@
         <!-- Status Bar -->
         <StatusBar Grid.Row="2">
             <StatusBarItem>
-                <!-- <TextBlock x:Name="StatusBarText" Text="Ready" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Application status" /> -->
                 <TextBlock x:Name="ProgressText" Text="Ready" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Application status" />
             </StatusBarItem>
         </StatusBar>

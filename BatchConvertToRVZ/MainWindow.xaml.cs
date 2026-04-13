@@ -8,11 +8,8 @@ using System.Text;
 using System.Threading.Channels;
 using System.Windows;
 using Microsoft.Win32;
-using System.Text.RegularExpressions;
-using System.Collections.Concurrent;
-using SharpCompress.Archives;
-using SharpCompress.Readers;
-using SharpCompress.Common;
+using IDisposable = System.IDisposable;
+using StringComparer = System.StringComparer;
 
 namespace BatchConvertToRVZ;
 
@@ -30,6 +27,9 @@ public partial class MainWindow : IDisposable
     private string? _dolphinToolPath;
     private CancellationTokenSource _cts;
     private readonly services.UpdateService _updateService;
+    private readonly services.ConversionService _conversionService;
+    private readonly services.VerificationService _verificationService;
+    private readonly services.FileService _fileService;
 
     private const string GitHubApiUrl = "https://api.github.com/repos/drpetersonfernandes/BatchConvertToRVZ/releases/latest";
 
@@ -49,19 +49,7 @@ public partial class MainWindow : IDisposable
         { "lz4", (1, 12) }
     };
 
-    // Supported input extensions (Updated to include all disc images)
-    private static readonly string[] AllSupportedInputExtensions = [".iso", ".gcm", ".wbfs", ".rvz", ".zip", ".7z", ".rar"];
-
-    private static readonly string[] ArchiveExtensions = [".zip", ".7z", ".rar"];
-
-    // Primary target extensions inside archives for RVZ conversion
-    private static readonly string[] PrimaryTargetExtensionsInsideArchive = [".iso", ".gcm", ".wbfs", ".rvz", ".nkit.iso"];
-
-    // Supported extension for verification
-    private static readonly string[] RvzExtension = [".rvz"];
-
-    // Pre-formatted extension lists for user-facing messages
-    private static readonly string PrimaryTargetExtensionsDisplay = string.Join(", ", PrimaryTargetExtensionsInsideArchive);
+    // Extension arrays moved to FileService
 
     // Statistics
     private int _totalFilesToProcess;
@@ -70,30 +58,12 @@ public partial class MainWindow : IDisposable
     private readonly Stopwatch _operationTimer = new();
     private System.Windows.Threading.DispatcherTimer? _processingTimeUpdateTimer;
 
-    // For Write Speed Calculation
-    private const int WriteSpeedUpdateIntervalMs = 500;
-
 
     private int _activeConversionCount;
 
     // Fields for verification move options
     private bool _moveFailedFiles;
     private bool _moveSuccessFiles;
-
-    // Counter to track active extractions (supports concurrent extractions in parallel mode)
-    private int _activeExtractionCount;
-
-    // Extraction progress tracking
-    private volatile string _currentExtractionFile = string.Empty;
-    private long _extractionBytesProcessed;
-    private long _extractionTotalBytes;
-    private DateTime _extractionLastUpdateTime = DateTime.UtcNow;
-    private long _extractionLastBytesProcessed;
-    private readonly object _extractionProgressLock = new();
-
-    // Real-time progress tracking for smooth overall progress bar
-    private readonly ConcurrentDictionary<string, double> _activeFileProgress = new();
-    private readonly object _progressLock = new();
 
     // File lists for UI
     private readonly BindingList<Models.FileItem> _conversionFiles = new();
@@ -105,21 +75,10 @@ public partial class MainWindow : IDisposable
         {
             if (_totalFilesToProcess == 0) return;
 
-            // Sum up all fractional progress from currently active files
-            double activeProgressSum = 0;
-            lock (_progressLock)
-            {
-                foreach (var progress in _activeFileProgress.Values)
-                {
-                    activeProgressSum += progress / 100.0;
-                }
-            }
-
             Dispatcher.BeginInvoke(() =>
             {
                 var completed = _successCount + _failureCount;
-                // Value is completed files + fraction of currently active ones
-                ProgressBar.Value = Math.Min(completed + activeProgressSum, _totalFilesToProcess);
+                ProgressBar.Value = Math.Min(completed, _totalFilesToProcess);
             });
         }
         catch (TaskCanceledException)
@@ -172,6 +131,15 @@ public partial class MainWindow : IDisposable
 
         // The BugReportService is now initialized and managed by the App class.
         _updateService = new services.UpdateService(GitHubApiUrl);
+
+        // Initialize service classes
+        _fileService = new services.FileService(LogMessage);
+        _conversionService = new services.ConversionService(
+            LogMessage,
+            message => ReportBugAsync(message));
+        _verificationService = new services.VerificationService(
+            LogMessage,
+            message => ReportBugAsync(message));
 
         LogMessage("Welcome to the Batch Convert to RVZ.");
         LogMessage("");
@@ -417,7 +385,7 @@ public partial class MainWindow : IDisposable
             _conversionFiles.Clear();
 
             var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(static file => AllSupportedInputExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
+                .Where(file => Enumerable.Contains(_fileService.GetAllSupportedInputExtensions(), Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
                 .ToArray();
 
             foreach (var file in files)
@@ -438,6 +406,7 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error populating file list: {ex.Message}");
+            _ = Task.Run(() => ReportBugAsync("Error populating conversion file list", ex));
         }
     }
 
@@ -577,12 +546,9 @@ public partial class MainWindow : IDisposable
         _cts.Cancel();
         LogMessage("Cancellation requested. Waiting for current operation(s) to complete...");
 
-        // Only show the extraction overlay if any extraction is currently in progress
-        if (_activeExtractionCount > 0)
-        {
-            ExtractionOverlayText.Text = "Cancellation requested.\nPlease wait for the current extraction to complete...";
-            ExtractionOverlay.Visibility = Visibility.Visible;
-        }
+        // Show extraction overlay when cancellation is requested
+        ExtractionOverlayText.Text = "Cancellation requested.\nPlease wait for the current extraction to complete...";
+        ExtractionOverlay.Visibility = Visibility.Visible;
     }
 
     private async Task SetControlsStateAsync(bool enabled)
@@ -709,16 +675,8 @@ public partial class MainWindow : IDisposable
     {
         try
         {
-            LogMessage("Preparing for batch conversion...");
-
+            ResetOperationStats();
             _totalFilesToProcess = files.Length;
-            UpdateStatsDisplay();
-            LogMessage($"Processing {_totalFilesToProcess} selected files.");
-            if (_totalFilesToProcess == 0)
-            {
-                LogMessage("No files selected for conversion.");
-                return;
-            }
 
             await Dispatcher.InvokeAsync(() =>
             {
@@ -726,47 +684,24 @@ public partial class MainWindow : IDisposable
                 ProgressBar.Value = 0;
             });
 
-            var filesProcessedCount = 0;
-
-            LogMessage("Processing files sequentially.");
-            foreach (var t in files)
-            {
-                if (_cts.Token.IsCancellationRequested)
+            await _conversionService.PerformBatchConversionAsync(
+                dolphinToolPath,
+                files,
+                outputFolder,
+                deleteFiles,
+                _rvzCompressionMethod,
+                _rvzCompressionLevel,
+                _rvzBlockSize,
+                (processed, total, fileName) =>
                 {
-                    LogMessage("Operation canceled by user.");
-                    break;
-                }
-
-                var fileName = Path.GetFileName(t);
-
-                LogMessage($"Processing: {fileName}");
-
-                var success = await ProcessFileAsync(dolphinToolPath, t, outputFolder, deleteFiles, _cts.Token);
-
-                if (success)
-                {
-                    Interlocked.Increment(ref _successCount);
-                    LogMessage($"Conversion successful: {fileName}");
-                }
-                else
-                {
-                    Interlocked.Increment(ref _failureCount);
-                    LogMessage($"Conversion failed: {fileName}");
-                }
-
-                // Remove from active progress AFTER incrementing counters to avoid progress bar jumping backwards
-                lock (_progressLock)
-                {
-                    _activeFileProgress.TryRemove(t, out _);
-                }
-
-                UpdateOverallProgress();
-
-                var processed = ++filesProcessedCount;
-                UpdateProgressDisplay(processed, _totalFilesToProcess, fileName, "Converting");
-                UpdateStatsDisplay();
-                UpdateProcessingTimeDisplay();
-            }
+                    UpdateProgressDisplay(processed, total, fileName, "Converting");
+                    UpdateOverallProgress();
+                    UpdateStatsDisplay();
+                    UpdateProcessingTimeDisplay();
+                },
+                count => Interlocked.Add(ref _successCount, count),
+                count => Interlocked.Add(ref _failureCount, count),
+                _cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -778,856 +713,6 @@ public partial class MainWindow : IDisposable
             ShowError($"Error during batch conversion: {ex.Message}");
             await ReportBugAsync("Error during batch conversion operation", ex);
         }
-    }
-
-    private async Task<bool> ProcessFileAsync(string dolphinToolPath, string inputFile, string outputFolder, bool deleteOriginal, CancellationToken cancellationToken)
-    {
-        var fileToProcess = inputFile;
-        var isArchiveFile = false;
-        var tempDir = string.Empty;
-        var fileExtension = Path.GetExtension(inputFile);
-
-        try
-        {
-            if (ArchiveExtensions.Contains(fileExtension, StringComparer.OrdinalIgnoreCase))
-            {
-                LogMessage($"Processing archive: {Path.GetFileName(inputFile)}");
-                var extractResult = await ExtractArchiveAsync(inputFile, cancellationToken);
-                if (extractResult.Success)
-                {
-                    fileToProcess = extractResult.FilePath;
-                    tempDir = extractResult.TempDir;
-                    isArchiveFile = true;
-                    LogMessage($"Using extracted file: {Path.GetFileName(fileToProcess)} from archive {Path.GetFileName(inputFile)}");
-                }
-                else
-                {
-                    LogMessage($"Error extracting archive {Path.GetFileName(inputFile)}: {extractResult.ErrorMessage}");
-                    // No need to report a bug here, as ExtractArchiveAsync handles bug reporting
-                    // for unexpected system errors, while user/archive errors are just logged.
-                    return false;
-                }
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Get the base name without game image extensions (handles compound extensions like .nkit.iso)
-            var outputFile = Path.Combine(outputFolder, GetBaseFileNameWithoutGameExtension(fileToProcess) + ".rvz");
-
-            if (File.Exists(outputFile))
-            {
-                LogMessage($"Output file already exists, overwriting: {Path.GetFileName(outputFile)}");
-
-                // Delete the existing file before creating a new one
-                await TryDeleteFile(outputFile, $"existing RVZ file to overwrite: {Path.GetFileName(outputFile)}", cancellationToken);
-            }
-
-            var success = await ConvertToRvzAsync(dolphinToolPath, fileToProcess, outputFile, cancellationToken);
-
-            if (!success || !deleteOriginal) return success;
-
-            if (isArchiveFile)
-            {
-                // Wait for file handles to be released by OS/antivirus
-                await Task.Delay(2000, cancellationToken);
-                await TryDeleteFile(inputFile, $"original archive file: {Path.GetFileName(inputFile)}", cancellationToken);
-            }
-            else
-            {
-                // Wait for file handles to be released by OS/antivirus
-                await Task.Delay(2000, cancellationToken);
-                await TryDeleteFile(inputFile, $"original ISO file: {Path.GetFileName(inputFile)}", cancellationToken);
-            }
-
-            return success;
-        }
-        catch (OperationCanceledException)
-        {
-            LogMessage($"Processing cancelled for {Path.GetFileName(inputFile)}.");
-
-            var potentialOutputFile = Path.Combine(outputFolder, GetBaseFileNameWithoutGameExtension(fileToProcess) + ".rvz");
-
-            await TryDeleteFile(potentialOutputFile, "partially created RVZ file after cancellation", CancellationToken.None);
-
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"Error processing file {Path.GetFileName(inputFile)}: {ex.Message}");
-            await ReportBugAsync($"Error processing file: {Path.GetFileName(inputFile)}", ex);
-            var potentialOutputFile = Path.Combine(outputFolder, GetBaseFileNameWithoutGameExtension(fileToProcess) + ".rvz");
-            if (File.Exists(potentialOutputFile))
-            {
-                // Small delay before attempting deletion
-                await Task.Delay(100, CancellationToken.None);
-                await TryDeleteFile(potentialOutputFile, "partially created RVZ file after error", CancellationToken.None);
-            }
-
-            return false;
-        }
-        finally
-        {
-            if (isArchiveFile && !string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
-            {
-                // Small delay before cleaning up temp directory
-                await Task.Delay(100, CancellationToken.None);
-                await TryDeleteDirectory(tempDir, "temporary extraction directory");
-            }
-        }
-    }
-
-    private async Task<bool> ConvertToRvzAsync(string dolphinToolPath, string inputFile, string outputFile, CancellationToken cancellationToken)
-    {
-        // Increment active conversion count for aggregate speed tracking
-        Interlocked.Increment(ref _activeConversionCount);
-
-        using var process = new Process();
-
-        // Declare event handlers outside try block so they're accessible in finally block
-        DataReceivedEventHandler? outputHandler = null;
-        DataReceivedEventHandler? errorHandler = null;
-
-        try
-        {
-            LogMessage($"Converting '{Path.GetFileName(inputFile)}' to '{Path.GetFileName(outputFile)}'...");
-
-            process.StartInfo = new ProcessStartInfo
-            {
-                FileName = dolphinToolPath,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            process.StartInfo.ArgumentList.Add("convert");
-            process.StartInfo.ArgumentList.Add("-i");
-            process.StartInfo.ArgumentList.Add(inputFile);
-            process.StartInfo.ArgumentList.Add("-o");
-            process.StartInfo.ArgumentList.Add(outputFile);
-            process.StartInfo.ArgumentList.Add("-f");
-            process.StartInfo.ArgumentList.Add("rvz");
-            process.StartInfo.ArgumentList.Add("-c");
-            process.StartInfo.ArgumentList.Add(_rvzCompressionMethod);
-            process.StartInfo.ArgumentList.Add("-l");
-            process.StartInfo.ArgumentList.Add(_rvzCompressionLevel.ToString(CultureInfo.InvariantCulture));
-            process.StartInfo.ArgumentList.Add("-b");
-            process.StartInfo.ArgumentList.Add(_rvzBlockSize.ToString(CultureInfo.InvariantCulture));
-
-            process.EnableRaisingEvents = true;
-
-            // Use ConcurrentQueue for thread-safe output collection from event handlers
-            var outputQueue = new ConcurrentQueue<string>();
-            var errorQueue = new ConcurrentQueue<string>();
-
-            // Store event handlers so we can remove them later to prevent memory leaks
-            outputHandler = (_, args) =>
-            {
-                if (string.IsNullOrEmpty(args.Data)) return;
-
-                outputQueue.Enqueue(args.Data);
-                if (!UpdateConversionProgress(args.Data, inputFile))
-                {
-                    LogMessage($"[DolphinTool] {args.Data}");
-                }
-            };
-            errorHandler = (_, args) =>
-            {
-                if (string.IsNullOrEmpty(args.Data))
-                {
-                    return;
-                }
-
-                errorQueue.Enqueue(args.Data);
-                if (!UpdateConversionProgress(args.Data, inputFile))
-                {
-                    LogMessage($"[DolphinTool ERROR] {args.Data}");
-                }
-            };
-            process.OutputDataReceived += outputHandler;
-            process.ErrorDataReceived += errorHandler;
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            var lastSpeedCheckTime = DateTime.UtcNow;
-            long lastFileSize = 0;
-            if (File.Exists(outputFile))
-            {
-                lastFileSize = new FileInfo(outputFile).Length;
-            }
-
-            while (!process.HasExited)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    try
-                    {
-                        if (!process.HasExited)
-                        {
-                            // Try graceful termination first
-                            process.Kill(true);
-
-                            // Give it a moment to exit gracefully
-                            // Use CancellationToken.None to ensure we actually wait for cleanup
-                            await Task.Delay(150, CancellationToken.None);
-
-                            // If still running, force kill
-                            if (!process.HasExited)
-                            {
-                                process.Kill();
-                                await Task.Delay(100, CancellationToken.None);
-                            }
-                        }
-                    }
-                    catch (Exception killEx)
-                    {
-                        LogMessage($"Error killing process for {Path.GetFileName(inputFile)}: {killEx.Message}");
-                    }
-
-                    cancellationToken.ThrowIfCancellationRequested();
-                }
-
-                // Wait for either the process to exit or the delay to complete
-                var processExitTask = process.WaitForExitAsync(cancellationToken);
-                var delayTask = Task.Delay(WriteSpeedUpdateIntervalMs, cancellationToken);
-                await Task.WhenAny(processExitTask, delayTask);
-
-                // If process exited, break immediately without waiting for the full delay
-                if (process.HasExited || cancellationToken.IsCancellationRequested) break;
-
-                try
-                {
-                    if (File.Exists(outputFile))
-                    {
-                        var currentFileSize = new FileInfo(outputFile).Length;
-                        var currentTime = DateTime.UtcNow;
-                        var timeDelta = currentTime - lastSpeedCheckTime;
-
-                        if (timeDelta.TotalSeconds > 0)
-                        {
-                            var bytesDelta = currentFileSize - lastFileSize;
-
-
-                            var speed = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
-                            UpdateWriteSpeedDisplay(speed);
-                        }
-
-                        lastFileSize = currentFileSize;
-                        lastSpeedCheckTime = currentTime;
-                    }
-                    else if (lastFileSize > 0)
-                    {
-                        // File was deleted or moved - reset tracking
-                        lastFileSize = 0;
-                        lastSpeedCheckTime = DateTime.UtcNow;
-                    }
-                }
-                catch (FileNotFoundException)
-                {
-                    /* File might not be created yet, or deleted */
-                }
-                catch (Exception ex)
-                {
-                    LogMessage($"Write speed monitoring error: {ex.Message}");
-                }
-            }
-
-            // Wait for process exit with cancellation token
-            try
-            {
-                await process.WaitForExitAsync(cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // Handle cancellation during wait
-                LogMessage($"Process wait cancelled for {Path.GetFileName(inputFile)}");
-                throw;
-            }
-
-            // Drain queues to StringBuilder for logging
-            var outputBuilder = new StringBuilder();
-            var errorBuilder = new StringBuilder();
-            while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
-            while (errorQueue.TryDequeue(out var line)) errorBuilder.AppendLine(line);
-
-            LogMessage($"DolphinTool raw output for {Path.GetFileName(inputFile)}: {outputBuilder}");
-            if (errorBuilder.Length > 0 && process.ExitCode != 0) LogMessage($"DolphinTool raw error for {Path.GetFileName(inputFile)}: {errorBuilder}");
-
-            return process.ExitCode == 0;
-        }
-        catch (OperationCanceledException)
-        {
-            LogMessage($"Conversion cancelled for {Path.GetFileName(inputFile)}.");
-
-            // Wait a moment for the OS to release the file handle after killing the process.
-            await Task.Delay(250, CancellationToken.None); // Use CancellationToken.None as the primary token is already cancelled.
-
-            // Wait for the process to fully exit
-            if (!process.HasExited)
-            {
-                try
-                {
-                    process.Kill(true);
-                }
-                catch
-                {
-                    /* ignore */
-                }
-
-                // Wait for the process to exit (with timeout)
-                try
-                {
-                    await process.WaitForExitAsync(CancellationToken.None);
-                }
-                catch
-                {
-                    /* ignore */
-                }
-            }
-
-            await TryDeleteFile(outputFile, "partially created RVZ file after cancellation", CancellationToken.None);
-
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"Error converting file {Path.GetFileName(inputFile)}: {ex.Message}");
-            await ReportBugAsync($"Error converting file: {Path.GetFileName(inputFile)}", ex);
-            if (File.Exists(outputFile))
-            {
-                // Small delay before attempting deletion
-                await Task.Delay(100, CancellationToken.None);
-                await TryDeleteFile(outputFile, "partially created RVZ file after error", CancellationToken.None);
-            }
-
-            return false;
-        }
-        finally
-        {
-            // Remove event handlers to prevent memory leaks
-            process.OutputDataReceived -= outputHandler;
-            process.ErrorDataReceived -= errorHandler;
-
-            // Decrement active conversion count
-            Interlocked.Decrement(ref _activeConversionCount);
-            // Only reset display if no more active conversions
-            if (Interlocked.CompareExchange(ref _activeConversionCount, 0, 0) == 0)
-            {
-                UpdateWriteSpeedDisplay(0);
-            }
-            // Process disposal is handled by 'using' statement
-        }
-    }
-
-    private async Task<bool> TryDeleteFile(string filePath, string description, CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (!File.Exists(filePath)) return true;
-
-            const int maxAttempts = 10;
-            for (var attempt = 0; attempt < maxAttempts; attempt++)
-            {
-                try
-                {
-                    // Clear attributes on each attempt (handles read-only, hidden, etc.)
-                    // This is done inside the loop in case attributes change between retries.
-                    try
-                    {
-                        File.SetAttributes(filePath, FileAttributes.Normal);
-                    }
-                    catch (Exception attrEx)
-                    {
-                        // Best-effort; delete might still work even if SetAttributes fails
-                        LogMessage($"Warning: Could not clear attributes for {Path.GetFileName(filePath)}: {attrEx.Message}");
-                    }
-
-                    File.Delete(filePath);
-                    LogMessage($"Deleted {description}: {Path.GetFileName(filePath)}");
-                    return true;
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < maxAttempts - 1)
-                {
-                    // File might be locked or have temporary access issues (e.g. antivirus scanning)
-
-                    // If we've tried several times, try to force a GC to close any potentially abandoned handles
-                    // from our own process that might still be hanging onto the file.
-                    if (attempt >= 7)
-                    {
-                        GC.Collect();
-                        GC.WaitForPendingFinalizers();
-                    }
-                }
-
-                // Exponential backoff: 250ms, 500ms, 750ms, 1000ms, 1500ms, 2000ms, 2500ms, 3000ms, 4000ms, 5000ms
-                var delay = attempt switch
-                {
-                    0 => 250,
-                    1 => 500,
-                    2 => 750,
-                    3 => 1000,
-                    4 => 1500,
-                    5 => 2000,
-                    6 => 2500,
-                    7 => 3000,
-                    8 => 4000,
-                    _ => 5000
-                };
-
-                LogMessage($"Cannot delete {Path.GetFileName(filePath)} yet (attempt {attempt + 1}/{maxAttempts}). Waiting {delay}ms...");
-                await Task.Delay(delay, cancellationToken);
-            }
-
-            LogMessage($"Failed to delete {description} {Path.GetFileName(filePath)} after {maxAttempts} attempts.");
-            return false;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"Error in TryDeleteFile for {description} {filePath}: {ex.Message}");
-            _ = Task.Run(() => ReportBugAsync($"Error in TryDeleteFile: {description}", ex), cancellationToken);
-            return false;
-        }
-    }
-
-
-    private async Task TryDeleteDirectory(string dirPath, string description)
-    {
-        try
-        {
-            if (!Directory.Exists(dirPath)) return;
-
-            for (var i = 0; i < 5; i++)
-            {
-                try
-                {
-                    Directory.Delete(dirPath, true);
-                    LogMessage($"Cleaned up {description}: {dirPath}");
-                    return;
-                }
-                catch (IOException)
-                {
-                    await Task.Delay(50);
-                }
-            }
-
-            LogMessage($"Failed to clean up {description} {dirPath} after multiple retries.");
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"Failed to clean up {description} {dirPath}: {ex.Message}");
-            await ReportBugAsync($"Error in TryDeleteDirectory: {description}", ex);
-        }
-    }
-
-    private static string EnsureTrailingSeparator(string path)
-    {
-        if (path.Length > 0 && path[^1] != Path.DirectorySeparatorChar && path[^1] != Path.AltDirectorySeparatorChar)
-            return path + Path.DirectorySeparatorChar;
-
-        return path;
-    }
-
-    private static bool IsPathInsideDirectory(string candidatePath, string directoryFullPath)
-    {
-        var resolved = EnsureTrailingSeparator(Path.GetFullPath(candidatePath));
-        return resolved.StartsWith(directoryFullPath, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractArchiveAsync(string archivePath, CancellationToken cancellationToken)
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-        var extension = Path.GetExtension(archivePath);
-        var archiveFileName = Path.GetFileName(archivePath);
-
-        // Increment the extraction counter (supports concurrent extractions in parallel mode)
-        Interlocked.Increment(ref _activeExtractionCount);
-
-        try
-        {
-            Directory.CreateDirectory(tempDir);
-
-            if (cancellationToken.IsCancellationRequested)
-            {
-                LogMessage($"Cancellation requested. Skipping extraction for {archiveFileName}.");
-                cancellationToken.ThrowIfCancellationRequested();
-            }
-
-            LogMessage($"Extracting {archiveFileName} to temporary directory: {tempDir}");
-            UpdateStatusBar($"Extracting {archiveFileName}...");
-            LogMessage("Extraction progress will be shown in the status bar...");
-
-            // Set up extraction progress tracking
-            lock (_extractionProgressLock)
-            {
-                _currentExtractionFile = archivePath;
-                _extractionBytesProcessed = 0;
-                _extractionTotalBytes = 0; // Will be set when we find the entry
-                _extractionLastUpdateTime = DateTime.UtcNow;
-                _extractionLastBytesProcessed = 0;
-            }
-
-            UpdateExtractionProgressDisplay();
-
-            if (ArchiveExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
-            {
-                await Task.Run(async () =>
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    // Normalize temp directory path once for all ZipSlip checks.
-                    // Both paths must have trailing separators so StartsWith cannot
-                    // match "C:\temp\abc1234" against prefix "C:\temp\abc".
-                    var tempDirFullPath = EnsureTrailingSeparator(Path.GetFullPath(tempDir));
-
-                    // Try the standard Archive API first (Seekable)
-                    try
-                    {
-                        using var archive = ArchiveFactory.OpenArchive(archivePath);
-                        foreach (var entry in archive.Entries.Where(static e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key)))
-                        {
-                            cancellationToken.ThrowIfCancellationRequested();
-
-                            var entryKey = entry.Key;
-                            if (entryKey == null) continue;
-
-                            // Trim leading slashes and backslashes to ensure Path.Combine works correctly
-                            // and doesn't treat the entry as an absolute path (prevents ZipSlip and extraction failures).
-                            entryKey = entryKey.TrimStart('/', '\\');
-
-                            if (!HasSupportedGameExtension(entryKey, PrimaryTargetExtensionsInsideArchive))
-                                continue;
-
-                            var entryPath = Path.Combine(tempDir, entryKey);
-
-                            if (!IsPathInsideDirectory(entryPath, tempDirFullPath))
-                            {
-                                LogMessage($"Skipping potentially malicious archive entry with directory traversal: {entryKey}");
-                                continue;
-                            }
-
-                            var entryDir = Path.GetDirectoryName(entryPath);
-                            if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
-                                Directory.CreateDirectory(entryDir);
-
-                            // Update total bytes for progress tracking
-                            lock (_extractionProgressLock)
-                            {
-                                _extractionTotalBytes = entry.Size;
-                                _extractionBytesProcessed = 0;
-                            }
-
-                            UpdateExtractionProgressDisplay();
-
-                            await using var entryStream = await entry.OpenEntryStreamAsync(cancellationToken);
-                            await using var fileStream = File.Create(entryPath);
-                            await CopyStreamWithCancellationAsync(entryStream, fileStream, cancellationToken, bytesRead =>
-                            {
-                                lock (_extractionProgressLock)
-                                {
-                                    _extractionBytesProcessed += bytesRead;
-                                }
-
-                                UpdateExtractionProgressDisplay();
-                            });
-                        }
-                    }
-                    catch (ArchiveException)
-                    {
-                        LogMessage($"Standard header not found. Trying streaming extraction for {archiveFileName}...");
-
-                        await using Stream stream = File.OpenRead(archivePath);
-                        using var reader = ReaderFactory.OpenReader(stream, new ReaderOptions());
-                        while (reader.MoveToNextEntry())
-                        {
-                            cancellationToken.ThrowIfCancellationRequested();
-
-                            if (reader.Entry.IsDirectory) continue;
-
-                            var entryKey = reader.Entry.Key;
-                            if (entryKey == null) continue;
-
-                            if (!HasSupportedGameExtension(entryKey, PrimaryTargetExtensionsInsideArchive))
-                                continue;
-
-                            var entryPath = Path.Combine(tempDir, entryKey);
-
-                            if (!IsPathInsideDirectory(entryPath, tempDirFullPath))
-                            {
-                                LogMessage($"Skipping potentially malicious archive entry with directory traversal: {entryKey}");
-                                continue;
-                            }
-
-                            var entryDir = Path.GetDirectoryName(entryPath);
-                            if (!string.IsNullOrEmpty(entryDir) && !Directory.Exists(entryDir))
-                                Directory.CreateDirectory(entryDir);
-
-                            // Update total bytes for progress tracking
-                            lock (_extractionProgressLock)
-                            {
-                                _extractionTotalBytes = reader.Entry.Size;
-                                _extractionBytesProcessed = 0;
-                            }
-
-                            UpdateExtractionProgressDisplay();
-
-                            await using var entryStream = reader.OpenEntryStream();
-                            await using var fileStream = File.Create(entryPath);
-                            await CopyStreamWithCancellationAsync(entryStream, fileStream, cancellationToken, bytesRead =>
-                            {
-                                lock (_extractionProgressLock)
-                                {
-                                    _extractionBytesProcessed += bytesRead;
-                                }
-
-                                UpdateExtractionProgressDisplay();
-                            });
-                        }
-                    }
-
-                    if (cancellationToken.IsCancellationRequested)
-                        LogMessage($"Extraction of {archiveFileName} completed, but cancellation was requested. Cleaning up.");
-
-                    cancellationToken.ThrowIfCancellationRequested();
-                }, cancellationToken);
-            }
-            else
-            {
-                // Clean up the temporary directory on unsupported archive type
-                await TryDeleteDirectory(tempDir, "unsupported archive type extraction directory");
-                return (false, string.Empty, string.Empty, $"Unsupported archive type: {extension}");
-            }
-
-            // After successful extraction (or if it wasn't cancelled during),
-            // look for the target file.
-            var supportedFile = Directory.GetFiles(tempDir, "*.*", SearchOption.AllDirectories)
-                .FirstOrDefault(static f => HasSupportedGameExtension(f, PrimaryTargetExtensionsInsideArchive));
-
-            if (supportedFile != null)
-            {
-                return (true, supportedFile, tempDir, string.Empty);
-            }
-
-            // No supported game image found - clean up the temp directory to prevent disk leak
-            await TryDeleteDirectory(tempDir, "extraction directory with no supported game images");
-            return (false, string.Empty, string.Empty, $"No supported game image ({PrimaryTargetExtensionsDisplay}) found in archive.");
-        }
-        catch (OperationCanceledException)
-        {
-            // Log the cancellation
-            LogMessage($"Extraction cancelled for {archiveFileName}.");
-
-            // Clean up the temporary directory created for this operation
-            await TryDeleteDirectory(tempDir, $"cancelled extraction directory for {archiveFileName}");
-
-            // Re-throw to indicate the operation was cancelled
-            throw;
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("archive", StringComparison.OrdinalIgnoreCase) ||
-                                                   ex.Message.Contains("password", StringComparison.OrdinalIgnoreCase) ||
-                                                   ex.Message.Contains("encrypted", StringComparison.OrdinalIgnoreCase) ||
-                                                   ex.Message.Contains("determine", StringComparison.OrdinalIgnoreCase) ||
-                                                   ex.Message.Contains("stream type", StringComparison.OrdinalIgnoreCase))
-        {
-            // Handle specific archive errors (corrupt, encrypted, unknown format, etc.) without sending a bug report.
-            var errorMessage = $"Failed to extract archive {archiveFileName}. It may be corrupt, encrypted, or an unsupported format. Error: {ex.Message}";
-            LogMessage(errorMessage);
-
-            // Clean up the temporary directory on failure
-            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
-
-            // Return a failure result with the detailed error message
-            return (false, string.Empty, string.Empty, errorMessage);
-        }
-        catch (CryptographicException ex)
-        {
-            // Handle encrypted archives without sending a bug report.
-            var errorMessage = $"Failed to extract archive {archiveFileName}. The archive is encrypted (requires a password), which is not currently supported. Error: {ex.Message}";
-            LogMessage(errorMessage);
-
-            // Clean up the temporary directory on failure
-            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
-
-            // Return a failure result with the detailed error message
-            return (false, string.Empty, string.Empty, errorMessage);
-        }
-        catch (IOException ex) when (ex.Message.Contains("corrupt") || ex.Message.Contains("invalid"))
-        {
-            // Handle specific archive errors (corrupt, etc.) without sending a bug report.
-            var errorMessage = $"Failed to extract archive {archiveFileName}. The archive may be corrupt. Error: {ex.Message}";
-            LogMessage(errorMessage);
-
-            // Clean up the temporary directory on failure
-            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
-
-            // Return a failure result with the detailed error message
-            return (false, string.Empty, string.Empty, errorMessage);
-        }
-        catch (IOException ex) when ((ex.HResult & 0xFFFF) == 0x70 || // ERROR_DISK_FULL (0x80070070)
-                                     ex.Message.Contains("not enough space", StringComparison.OrdinalIgnoreCase) ||
-                                     ex.Message.Contains("disk full", StringComparison.OrdinalIgnoreCase))
-        {
-            // Handle disk full errors without sending a bug report - this is a user environment issue.
-            var errorMessage = $"Failed to extract archive {archiveFileName}. Not enough disk space available. Error: {ex.Message}";
-            LogMessage(errorMessage);
-
-            // Clean up the temporary directory on failure
-            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
-
-            // Return a failure result with the detailed error message
-            return (false, string.Empty, string.Empty, errorMessage);
-        }
-        catch (SharpCompressException ex)
-        {
-            // Handle SharpCompress errors (corrupt data, LZMA errors, etc.) without sending a bug report.
-            var errorMessage = $"Failed to extract archive {archiveFileName}. The archive data is corrupt or invalid. Error: {ex.Message}";
-            LogMessage(errorMessage);
-
-            // Clean up the temporary directory on failure
-            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
-
-            // Return a failure result with the detailed error message
-            return (false, string.Empty, string.Empty, errorMessage);
-        }
-        catch (Exception ex)
-        {
-            // Log any other exceptions that occurred during extraction
-            LogMessage($"Error extracting archive {archiveFileName}: {ex.Message}");
-
-            // Report the bug asynchronously for unexpected errors
-            await ReportBugAsync($"Error extracting archive: {archiveFileName}", ex);
-
-            // Clean up the temporary directory on failure
-            await TryDeleteDirectory(tempDir, $"failed extraction directory for {archiveFileName}");
-
-            // Return a failure result with the error message
-            return (false, string.Empty, string.Empty, $"Exception during extraction: {ex.Message}");
-        }
-        finally
-        {
-            // Clear extraction progress tracking
-            lock (_extractionProgressLock)
-            {
-                _currentExtractionFile = string.Empty;
-                _extractionBytesProcessed = 0;
-                _extractionTotalBytes = 0;
-                _extractionLastUpdateTime = DateTime.UtcNow;
-                _extractionLastBytesProcessed = 0;
-            }
-
-            UpdateExtractionProgressDisplay();
-
-            // Update status bar when extraction completes
-            UpdateStatusBar("Extraction completed");
-
-            // Decrement the extraction counter when extraction completes (successfully or with error)
-            Interlocked.Decrement(ref _activeExtractionCount);
-        }
-    }
-
-    private static async Task CopyStreamWithCancellationAsync(Stream input, Stream output, CancellationToken cancellationToken, Action<long>? progressCallback = null)
-    {
-        var buffer = new byte[81920]; // 80KB buffer
-        try
-        {
-            int bytesRead;
-            while ((bytesRead = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
-            {
-                await output.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
-
-                progressCallback?.Invoke(bytesRead);
-
-                cancellationToken.ThrowIfCancellationRequested();
-            }
-
-            await output.FlushAsync(cancellationToken);
-        }
-        catch
-        {
-            // Ensure output is flushed before re-throwing
-            try
-            {
-                await output.FlushAsync(CancellationToken.None);
-            }
-            catch
-            {
-                // ignored
-            }
-
-            throw;
-        }
-    }
-
-
-    private bool UpdateConversionProgress(string progressLine, string fileName)
-    {
-        try
-        {
-            var match = MyRegex().Match(progressLine);
-            if (!match.Success) return false;
-
-            var percentageStr = match.Groups[1].Value;
-            // FIX: Remove thousand separators and normalize decimal separator for locale-independent parsing
-            // Handles formats like "1,000.5%", "1.000,5%", "1000.5%", "1000,5%"
-            percentageStr = RemoveThousandSeparators(percentageStr);
-            if (!double.TryParse(percentageStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var percentage))
-                return false;
-
-            // Store this file's progress and trigger an overall UI update
-            lock (_progressLock)
-            {
-                _activeFileProgress[fileName] = percentage;
-            }
-
-            UpdateOverallProgress();
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"Error parsing DolphinTool progress line '{progressLine}': {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Removes thousand separators and normalizes decimal separator to period for invariant culture parsing.
-    /// Robustly handles various locale formats like "1,000.5", "1.000,5", "1000.5", "1000,5" by treating
-    /// the last non-digit character as the decimal separator.
-    /// </summary>
-    private static string RemoveThousandSeparators(string numberStr)
-    {
-        if (string.IsNullOrEmpty(numberStr))
-            return numberStr;
-
-        // Find the last occurrence of a potential decimal separator (comma or period)
-        var lastSeparatorIndex = numberStr.LastIndexOfAny([',', '.']);
-
-        if (lastSeparatorIndex == -1)
-        {
-            // No separators at all, just return the string (might contain only digits)
-            return numberStr;
-        }
-
-        // The last separator found is very likely the decimal separator.
-        // We take everything before it and remove all non-digits (thousand separators).
-        var integerPart = numberStr[..lastSeparatorIndex];
-        var decimalPart = numberStr[(lastSeparatorIndex + 1)..];
-
-        // Strip all non-digits from the integer part (removes both dots and commas)
-        var sb = new StringBuilder();
-        foreach (var c in integerPart)
-        {
-            if (char.IsDigit(c))
-                sb.Append(c);
-        }
-
-        // Reconstruct with a period as the decimal separator
-        return sb + "." + decimalPart;
     }
 
     private async Task<MessageBoxResult> ShowMessageBoxAsync(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
@@ -1826,12 +911,11 @@ public partial class MainWindow : IDisposable
     {
         try
         {
-            var process = Process.Start(new ProcessStartInfo
+            using var process = Process.Start(new ProcessStartInfo
             {
                 FileName = url,
                 UseShellExecute = true
             });
-            process?.Dispose();
         }
         catch (Exception ex)
         {
@@ -1921,7 +1005,7 @@ public partial class MainWindow : IDisposable
             _verificationFiles.Clear();
 
             var files = Directory.GetFiles(verifyFolder, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(static file => RvzExtension.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
+                .Where(file => Enumerable.Contains(_fileService.GetRvzExtensions(), Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
                 .ToArray();
 
             foreach (var file in files)
@@ -1942,6 +1026,7 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error populating verification file list: {ex.Message}");
+            _ = Task.Run(() => ReportBugAsync("Error populating verification file list", ex));
         }
     }
 
@@ -2071,16 +1156,8 @@ public partial class MainWindow : IDisposable
     {
         try
         {
-            LogMessage("Preparing for batch verification...");
-
+            ResetOperationStats();
             _totalFilesToProcess = files.Length;
-            UpdateStatsDisplay();
-            LogMessage($"Verifying {_totalFilesToProcess} selected RVZ files.");
-            if (_totalFilesToProcess == 0)
-            {
-                LogMessage("No files selected for verification.");
-                return;
-            }
 
             await Dispatcher.InvokeAsync(() =>
             {
@@ -2088,29 +1165,21 @@ public partial class MainWindow : IDisposable
                 ProgressBar.Value = 0;
             });
 
-            var filesProcessedCount = 0;
-
-            LogMessage("Verifying files sequentially.");
-            foreach (var inputFile in files)
-            {
-                if (_cts.Token.IsCancellationRequested) break;
-
-                var success = await VerifyRzvFileAsync(dolphinToolPath, inputFile, Path.GetDirectoryName(inputFile) ?? string.Empty, moveFailed, moveSuccess, _cts.Token);
-                if (success)
+            await _verificationService.PerformBatchVerificationAsync(
+                dolphinToolPath,
+                files,
+                moveFailed,
+                moveSuccess,
+                (processed, total, fileName) =>
                 {
-                    Interlocked.Increment(ref _successCount);
-                }
-                else
-                {
-                    Interlocked.Increment(ref _failureCount);
-                }
-
-                var processed = ++filesProcessedCount;
-                UpdateProgressDisplay(processed, _totalFilesToProcess, Path.GetFileName(inputFile), "Verifying");
-                UpdateOverallProgress();
-                UpdateStatsDisplay();
-                UpdateProcessingTimeDisplay();
-            }
+                    UpdateProgressDisplay(processed, total, fileName, "Verifying");
+                    UpdateOverallProgress();
+                    UpdateStatsDisplay();
+                    UpdateProcessingTimeDisplay();
+                },
+                count => Interlocked.Add(ref _successCount, count),
+                count => Interlocked.Add(ref _failureCount, count),
+                _cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -2121,197 +1190,6 @@ public partial class MainWindow : IDisposable
             LogMessage($"Error during batch verification: {ex.Message}");
             ShowError($"Error during batch verification: {ex.Message}");
             await ReportBugAsync("Error during batch verification operation", ex);
-        }
-    }
-
-    private async Task<bool> VerifyRzvFileAsync(string dolphinToolPath, string inputFile, string baseFolder, bool moveFailed, bool moveSuccess, CancellationToken token)
-    {
-        var fileName = Path.GetFileName(inputFile);
-        using var process = new Process();
-        var verificationResult = false;
-        string? tempWorkingDirectory = null;
-        var wasCanceled = false; // NEW: Flag to track if cancellation occurred for this specific task
-
-        // Declare event handlers outside try block so they're accessible in finally block
-        DataReceivedEventHandler? outputHandler = null;
-        DataReceivedEventHandler? errorHandler = null;
-
-        try
-        {
-            LogMessage($"Verifying: {fileName}...");
-
-            tempWorkingDirectory = Path.Combine(Path.GetTempPath(), "BatchConvertToRVZ_DolphinTool_Temp_" + Path.GetRandomFileName());
-            Directory.CreateDirectory(tempWorkingDirectory);
-
-            process.StartInfo = new ProcessStartInfo
-            {
-                FileName = dolphinToolPath,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = tempWorkingDirectory
-            };
-            process.StartInfo.ArgumentList.Add("verify");
-            process.StartInfo.ArgumentList.Add("-i");
-            process.StartInfo.ArgumentList.Add(inputFile);
-
-            process.EnableRaisingEvents = true;
-
-            // Use ConcurrentQueue for thread-safe output collection from event handlers
-            var outputQueue = new ConcurrentQueue<string>();
-            outputHandler = (_, args) =>
-            {
-                if (string.IsNullOrEmpty(args.Data)) return;
-
-                outputQueue.Enqueue(args.Data);
-                LogMessage($"[DolphinTool] {args.Data}");
-            };
-            errorHandler = (_, args) =>
-            {
-                if (string.IsNullOrEmpty(args.Data)) return;
-
-                outputQueue.Enqueue(args.Data);
-                LogMessage($"[DolphinTool ERROR] {args.Data}");
-            };
-            process.OutputDataReceived += outputHandler;
-            process.ErrorDataReceived += errorHandler;
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            try
-            {
-                await process.WaitForExitAsync(token);
-            }
-            catch (OperationCanceledException)
-            {
-                if (!process.HasExited) process.Kill(true);
-                throw;
-            }
-
-            // Drain queue to build output string
-            var outputBuilder = new StringBuilder();
-            while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
-            var output = outputBuilder.ToString();
-            if (process.ExitCode == 0 && output.Contains("Problems Found: No"))
-            {
-                LogMessage($"[OK] Verification successful for: {fileName}");
-                verificationResult = true;
-            }
-            else
-            {
-                LogMessage($"[FAIL] Verification failed for: {fileName}. Output: {output.Trim()}");
-                verificationResult = false;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            LogMessage($"Verification cancelled for {fileName}.");
-            wasCanceled = true; // Set the flag
-            if (process.HasExited) throw;
-
-            try
-            {
-                if (process is { HasExited: false })
-                {
-                    process.Kill(true);
-                }
-            }
-            catch
-            {
-                /* Ignore */
-            }
-
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"Error verifying file {fileName}: {ex.Message}");
-            await ReportBugAsync($"Error verifying file: {fileName}", ex);
-            verificationResult = false;
-        }
-        finally
-        {
-            // Remove event handlers to prevent memory leaks
-            if (outputHandler != null)
-            {
-                process.OutputDataReceived -= outputHandler;
-            }
-
-            if (errorHandler != null)
-            {
-                process.ErrorDataReceived -= errorHandler;
-            }
-
-            // NEW: Only move files if the operation was NOT canceled for this specific file
-            if (!wasCanceled)
-            {
-                switch (verificationResult)
-                {
-                    case true when moveSuccess:
-                        await MoveFileToSubfolder(inputFile, baseFolder, "_Success");
-                        break;
-                    case false when moveFailed:
-                        await MoveFileToSubfolder(inputFile, baseFolder, "_Failed");
-                        break;
-                }
-            }
-            else
-            {
-                LogMessage($"Skipping move for '{fileName}' due to cancellation.");
-            }
-
-            if (!string.IsNullOrEmpty(tempWorkingDirectory) && Directory.Exists(tempWorkingDirectory))
-            {
-                await TryDeleteDirectory(tempWorkingDirectory, $"temporary working directory for {fileName}");
-            }
-        }
-
-        return verificationResult;
-    }
-
-
-    private async Task MoveFileToSubfolder(string sourceFilePath, string baseFolder, string subfolderName)
-    {
-        try
-        {
-            var destinationFolder = Path.Combine(baseFolder, subfolderName);
-            Directory.CreateDirectory(destinationFolder);
-
-            var destinationFilePath = Path.Combine(destinationFolder, Path.GetFileName(sourceFilePath));
-
-            if (File.Exists(destinationFilePath))
-            {
-                LogMessage($"Deleting existing file at destination: {Path.GetFileName(destinationFilePath)}");
-                var deletionSucceeded = await TryDeleteFile(destinationFilePath, $"existing file in {subfolderName} folder", _cts.Token);
-                if (!deletionSucceeded)
-                {
-                    LogMessage($"Cannot move '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder: failed to delete existing file at destination.");
-                    return;
-                }
-            }
-
-            // Use try-catch to handle race condition where file might be created between check and move
-            try
-            {
-                File.Move(sourceFilePath, destinationFilePath);
-                LogMessage($"Moved '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder.");
-            }
-            catch (IOException ioEx) when (ioEx.Message.Contains("already exists"))
-            {
-                // Race condition: file was created between our check and the move
-                LogMessage("Destination file appeared during move operation. Attempting to delete and retry...");
-                await TryDeleteFile(destinationFilePath, $"race-condition file in {subfolderName} folder", _cts.Token);
-                File.Move(sourceFilePath, destinationFilePath);
-                LogMessage($"Moved '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder after retry.");
-            }
-        }
-        catch (Exception ex)
-        {
-            LogMessage($"Error moving file '{Path.GetFileName(sourceFilePath)}' to '{subfolderName}' folder: {ex.Message}");
-            _ = Task.Run(() => ReportBugAsync($"Error moving file: {Path.GetFileName(sourceFilePath)} to {subfolderName}", ex));
         }
     }
 
@@ -2456,84 +1334,6 @@ public partial class MainWindow : IDisposable
         return verb.EndsWith('e') ? verb + "d" : verb + "ed";
     }
 
-    private void UpdateExtractionProgressDisplay()
-    {
-        try
-        {
-            Dispatcher.BeginInvoke(() =>
-            {
-                if (!string.IsNullOrEmpty(_currentExtractionFile))
-                {
-                    var fileName = Path.GetFileName(_currentExtractionFile);
-                    var percentage = _extractionTotalBytes > 0
-                        ? (double)_extractionBytesProcessed / _extractionTotalBytes * 100
-                        : 0;
-
-                    // Calculate extraction speed
-                    double speedMBps = 0;
-                    lock (_extractionProgressLock)
-                    {
-                        var currentTime = DateTime.UtcNow;
-                        var timeDelta = currentTime - _extractionLastUpdateTime;
-
-                        if (timeDelta.TotalSeconds > 0.5) // Update speed every 0.5 seconds
-                        {
-                            var bytesDelta = _extractionBytesProcessed - _extractionLastBytesProcessed;
-                            speedMBps = (bytesDelta / timeDelta.TotalSeconds) / (1024.0 * 1024.0);
-
-                            _extractionLastUpdateTime = currentTime;
-                            _extractionLastBytesProcessed = _extractionBytesProcessed;
-                        }
-                    }
-
-                    var speedText = speedMBps > 0 ? $" at {speedMBps:F1} MB/s" : "";
-                    ProgressText.Text = $"Extracting {fileName}... ({percentage:F1}%){speedText}";
-
-                    // Also update progress bar if we have total bytes
-                    if (_extractionTotalBytes > 0)
-                    {
-                        FileProgressBar.Maximum = 100;
-                        FileProgressBar.Value = Math.Min(percentage, 100);
-                    }
-                }
-                else
-                {
-                    // Reset to ready state if no extraction in progress
-                    ProgressText.Text = "Ready.";
-                    FileProgressBar.Value = 0;
-                    FileProgressBar.Maximum = 1;
-                }
-            });
-        }
-        catch (TaskCanceledException)
-        {
-            // Expected during application shutdown
-        }
-        catch (InvalidOperationException)
-        {
-            // Dispatcher is shutting down
-        }
-    }
-
-    /// <summary>
-    /// Checks if a file name has any of the supported extensions, handling compound extensions like .nkit.iso.
-    /// </summary>
-    private static bool HasSupportedGameExtension(string fileName, string[] supportedExtensions)
-    {
-        foreach (var ext in supportedExtensions)
-        {
-            if (fileName.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    [GeneratedRegex(@"([\d.,]+)%")]
-    private static partial Regex MyRegex();
-
     /// <summary>
     /// Handles compression method selection change.
     /// Updates the compression level slider range based on the selected method.
@@ -2600,32 +1400,5 @@ public partial class MainWindow : IDisposable
                 LogMessage($"Warning: Invalid block size '{blockSize}' selected. Using default value.");
             }
         }
-    }
-
-    /// <summary>
-    /// Gets the base file name without game image extensions.
-    /// Handles compound extensions like .nkit.iso correctly.
-    /// </summary>
-    private static string GetBaseFileNameWithoutGameExtension(string filePath)
-    {
-        var fileName = Path.GetFileName(filePath);
-
-        // Handle compound extension .nkit.iso explicitly first as it's the only compound one
-        if (fileName.EndsWith(".nkit.iso", StringComparison.OrdinalIgnoreCase))
-        {
-            return fileName[..^9]; // Remove .nkit.iso
-        }
-
-        // Handle other game image extensions from our supported list
-        foreach (var ext in PrimaryTargetExtensionsInsideArchive)
-        {
-            if (fileName.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
-            {
-                return fileName[..^ext.Length];
-            }
-        }
-
-        // Fallback to standard behavior if no target extension matched
-        return Path.GetFileNameWithoutExtension(fileName);
     }
 }

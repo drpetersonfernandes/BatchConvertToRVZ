@@ -13,11 +13,11 @@ namespace BatchConvertToRVZ.services;
 public partial class UpdateService : IDisposable
 {
     // Shared static HttpClient handler to prevent socket exhaustion.
-    // Not disposed explicitly — lives for the app lifetime and is cleaned up by the finalizer on exit.
-    private static readonly SocketsHttpHandler SharedHandler = new()
+    // Properly disposed when the application exits.
+    private static readonly Lazy<SocketsHttpHandler> SharedHandler = new(static () => new SocketsHttpHandler
     {
         PooledConnectionLifetime = TimeSpan.FromMinutes(2)
-    };
+    });
 
     private readonly HttpClient _httpClient;
     private readonly string _githubApiUrl;
@@ -32,7 +32,7 @@ public partial class UpdateService : IDisposable
 
         // Create a new HttpClient instance that shares the static handler
         // This allows per-instance headers while sharing the connection pool
-        _httpClient = new HttpClient(SharedHandler, false);
+        _httpClient = new HttpClient(SharedHandler.Value, false);
 
         // GitHub API requires a User-Agent header.
         _httpClient.DefaultRequestHeaders.UserAgent.Add(
@@ -125,6 +125,9 @@ public partial class UpdateService : IDisposable
         if (tag.Length > 0 && tag[0] is 'v' or 'V')
         {
             tag = tag[1..];
+            // Check if tag became empty after removing prefix
+            if (string.IsNullOrEmpty(tag))
+                return null;
         }
 
         // Extract numeric version: supports 2, 3, or 4 segment versions
@@ -146,5 +149,17 @@ public partial class UpdateService : IDisposable
     {
         _httpClient.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Disposes the shared handler when the application exits.
+    /// Call this method during application shutdown.
+    /// </summary>
+    public static void DisposeSharedHandler()
+    {
+        if (SharedHandler.IsValueCreated)
+        {
+            SharedHandler.Value.Dispose();
+        }
     }
 }
