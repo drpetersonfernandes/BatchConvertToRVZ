@@ -322,17 +322,8 @@
                           HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                           ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
                           Background="{StaticResource BorderBrush}"
-                          ShowsPreview="True">
-                <GridSplitter.Style>
-                    <Style TargetType="GridSplitter">
-                        <Setter Property="Cursor" Value="SizeWE" />
-                        <Style.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{StaticResource PrimaryAccentBrush}" />
-                            </Trigger>
-                        </Style.Triggers>
-                    </Style>
-                </GridSplitter.Style>
+                          ShowsPreview="True"
+                          Style="{StaticResource MainGridSplitterStyle}">
             </GridSplitter>
 
             <!-- Log Viewer -->

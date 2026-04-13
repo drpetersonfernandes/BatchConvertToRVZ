@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using BatchConvertToRVZ.Models;
 
 namespace BatchConvertToRVZ.services;
@@ -65,6 +66,69 @@ public class BugReportService : IDisposable
             // Silently fail if there's an exception
             return false;
         }
+    }
+
+    /// <summary>
+    /// Sends a bug report to the API with system information including exception details
+    /// </summary>
+    /// <param name="message">The error message or bug report</param>
+    /// <param name="exception">The exception that occurred</param>
+    /// <returns>A task representing the asynchronous operation</returns>
+    public async Task<bool> SendBugReportAsync(string message, Exception exception)
+    {
+        try
+        {
+            // Format the exception details
+            var formattedMessage = FormatExceptionMessage(message, exception);
+
+            // Send the bug report
+            return await SendBugReportAsync(formattedMessage);
+        }
+        catch
+        {
+            // Silently fail if there's an exception
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Formats an exception message for inclusion in a bug report
+    /// </summary>
+    /// <param name="message">The error message</param>
+    /// <param name="exception">The exception that occurred</param>
+    /// <returns>A formatted error message with exception details</returns>
+    private static string FormatExceptionMessage(string message, Exception exception)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(message);
+        sb.AppendLine();
+        sb.AppendLine("Exception Details:");
+
+        var level = 0;
+        var currentException = exception;
+
+        while (currentException != null)
+        {
+            var indent = new string(' ', level * 2);
+            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}Type: {currentException.GetType().FullName}");
+            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}Message: {currentException.Message}");
+            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}Source: {currentException.Source}");
+            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}StackTrace:");
+            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}{currentException.StackTrace}");
+
+            if (currentException.InnerException != null)
+            {
+                sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}Inner Exception:");
+                currentException = currentException.InnerException;
+                level++;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>
