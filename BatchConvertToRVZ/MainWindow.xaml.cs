@@ -197,6 +197,8 @@ public partial class MainWindow : IDisposable
         if (missingFiles.Count != 0)
         {
             _dependenciesOk = false;
+            StartConversionButton.IsEnabled = false;
+            StartVerifyButton.IsEnabled = false;
             var missingFilesString = string.Join(", ", missingFiles);
             var errorMessage = $"The following critical file(s) are missing: {missingFilesString}.\n\nThe application cannot function without them. Please ensure all files from the release archive are in the same folder as this application.";
             LogMessage($"WARNING: {errorMessage.ReplaceLineEndings(" ")}");
@@ -425,8 +427,9 @@ public partial class MainWindow : IDisposable
         {
             if (!_dependenciesOk || string.IsNullOrEmpty(_dolphinToolPath))
             {
+                var exeName = GetDolphinToolExecutableName();
                 LogMessage("Error: Critical dependencies are missing. Cannot start conversion.");
-                ShowError("A required file (like DolphinTool.exe) is missing. Please check the application directory.");
+                ShowError($"A required file (like {exeName}) is missing. Please check the application directory.");
                 return;
             }
 
@@ -453,9 +456,25 @@ public partial class MainWindow : IDisposable
                 return;
             }
 
+            var selectedFiles = _conversionFiles.Where(static f => f.IsSelected).Select(static f => f.FullPath).ToArray();
+            if (selectedFiles.Length == 0)
+            {
+                LogMessage("Error: No files selected for conversion.");
+                ShowError("Please select at least one file to convert.");
+                return;
+            }
+
             if (AreSameFolder(inputFolder, outputFolder))
             {
                 const string msg = "The input and output folders must be different directories.";
+                LogMessage($"Error: {msg}");
+                ShowError(msg);
+                return;
+            }
+
+            if (IsSubdirectory(inputFolder, outputFolder) || IsSubdirectory(outputFolder, inputFolder))
+            {
+                const string msg = "The input and output folders cannot be nested within each other.";
                 LogMessage($"Error: {msg}");
                 ShowError(msg);
                 return;
@@ -492,37 +511,23 @@ public partial class MainWindow : IDisposable
             LogMessage($"Delete original files: {deleteFiles}");
             LogMessage($"RVZ Compression: Method={_rvzCompressionMethod}, Level={_rvzCompressionLevel}, Block Size={_rvzBlockSize}");
 
-            // Get selected files from DataGrid
-            var selectedFiles = _conversionFiles.Where(static f => f.IsSelected).Select(static f => f.FullPath).ToArray();
-            if (selectedFiles.Length == 0)
-            {
-                LogMessage("Error: No files selected for conversion.");
-                ShowError("Please select at least one file to convert.");
-                return;
-            }
-
             // Wrap the whole job in a task that we can await on exit
+            var wasCancelled = false;
             try
             {
-                _runningTask = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await PerformBatchConversionAsync(_dolphinToolPath, selectedFiles,
-                            outputFolder, deleteFiles);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        LogMessage("Conversion cancelled by user.");
-                    }
-                    catch (Exception ex)
-                    {
-                        LogMessage($"Fatal conversion error: {ex.Message}");
-                        await ReportBugAsync("Unhandled exception in conversion", ex);
-                    }
-                });
+                _runningTask = Task.Run(() => PerformBatchConversionAsync(_dolphinToolPath, selectedFiles, outputFolder, deleteFiles), _cts.Token);
 
                 await _runningTask.ConfigureAwait(false); // resume on thread pool, not UI thread
+            }
+            catch (OperationCanceledException)
+            {
+                wasCancelled = true;
+                LogMessage("Conversion cancelled by user.");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Fatal conversion error: {ex.Message}");
+                await ReportBugAsync("Unhandled exception in conversion", ex);
             }
             finally
             {
@@ -530,9 +535,16 @@ public partial class MainWindow : IDisposable
                 _processingTimeUpdateTimer?.Stop();
                 UpdateProcessingTimeDisplay();
                 UpdateWriteSpeedDisplay(0);
-                UpdateStatusBar("Conversion completed");
+                UpdateStatusBar(wasCancelled ? "Conversion cancelled" : "Conversion completed");
                 await SetControlsStateAsync(true);
-                await LogOperationSummaryAsync("convert", "Conversion");
+                if (!wasCancelled)
+                {
+                    await LogOperationSummaryAsync("convert", "Conversion");
+                }
+                else
+                {
+                    LogMessage("--- Batch conversion cancelled. ---");
+                }
             }
         }
         catch (Exception ex)
@@ -671,6 +683,21 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    private static bool IsSubdirectory(string parent, string child)
+    {
+        try
+        {
+            var parentFull = Path.GetFullPath(parent).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var childFull = Path.GetFullPath(child).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return childFull.StartsWith(parentFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                   || childFull.StartsWith(parentFull + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private async Task PerformBatchConversionAsync(string dolphinToolPath, string[] files, string outputFolder, bool deleteFiles)
     {
         try
@@ -680,6 +707,8 @@ public partial class MainWindow : IDisposable
 
             await Dispatcher.InvokeAsync(() =>
             {
+                FileProgressBar.IsIndeterminate = true;
+                FileProgressBar.Value = 0;
                 ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
                 ProgressBar.Value = 0;
             });
@@ -712,6 +741,14 @@ public partial class MainWindow : IDisposable
             LogMessage($"Error during batch conversion: {ex.Message}");
             ShowError($"Error during batch conversion: {ex.Message}");
             await ReportBugAsync("Error during batch conversion operation", ex);
+        }
+        finally
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                FileProgressBar.IsIndeterminate = false;
+                FileProgressBar.Value = 0;
+            });
         }
     }
 
@@ -894,6 +931,24 @@ public partial class MainWindow : IDisposable
                 }
             }
         }
+        catch (System.Net.Http.HttpRequestException ex)
+        {
+            var errorMessage = $"Failed to check for updates: network error ({ex.Message})";
+            LogMessage(errorMessage);
+            if (isManualCheck)
+            {
+                await ShowMessageBoxAsync("Could not connect to update server. Please check your internet connection.", "Update Check Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (TaskCanceledException ex)
+        {
+            var errorMessage = $"Update check timed out: {ex.Message}";
+            LogMessage(errorMessage);
+            if (isManualCheck)
+            {
+                await ShowMessageBoxAsync("Update check timed out. Please try again later.", "Update Check Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
         catch (Exception ex)
         {
             var errorMessage = $"Error checking for updates: {ex.Message}";
@@ -932,9 +987,16 @@ public partial class MainWindow : IDisposable
         {
             Dispatcher.BeginInvoke(() =>
             {
-                ProgressBar.Value = 0; // Reset progress
-                ProgressBar.Maximum = 1; // Ensure the maximum is not zero when idle
-                ProgressText.Text = "Ready."; // Set a default idle message
+                FileProgressBar.IsIndeterminate = false;
+                FileProgressBar.Value = 0;
+                FileProgressBar.Maximum = 1;
+                ProgressBar.IsIndeterminate = false;
+                ProgressBar.Value = 0;
+                ProgressBar.Maximum = 1;
+                if (FindName("StatusBarText") is System.Windows.Controls.TextBlock statusBarText)
+                {
+                    statusBarText.Text = "Ready."; // Set a default idle message
+                }
             });
         }
         catch (TaskCanceledException)
@@ -1068,8 +1130,9 @@ public partial class MainWindow : IDisposable
         {
             if (!_dependenciesOk || string.IsNullOrEmpty(_dolphinToolPath))
             {
+                var exeName = GetDolphinToolExecutableName();
                 LogMessage("Error: Critical dependencies are missing. Cannot start verification.");
-                ShowError("A required file (like DolphinTool.exe) is missing. Please check the application directory.");
+                ShowError($"A required file (like {exeName}) is missing. Please check the application directory.");
                 return;
             }
 
@@ -1086,6 +1149,14 @@ public partial class MainWindow : IDisposable
                 return;
             }
 
+            var selectedFiles = _verificationFiles.Where(static f => f.IsSelected).Select(static f => f.FullPath).ToArray();
+            if (selectedFiles.Length == 0)
+            {
+                LogMessage("Error: No files selected for verification.");
+                ShowError("Please select at least one file to verify.");
+                return;
+            }
+
             if (_cts.IsCancellationRequested)
             {
                 _cts.Dispose();
@@ -1097,15 +1168,6 @@ public partial class MainWindow : IDisposable
             _operationTimer.Restart();
             _processingTimeUpdateTimer?.Start();
 
-            // Get selected files from DataGrid
-            var selectedFiles = _verificationFiles.Where(static f => f.IsSelected).Select(static f => f.FullPath).ToArray();
-            if (selectedFiles.Length == 0)
-            {
-                LogMessage("Error: No files selected for verification.");
-                ShowError("Please select at least one file to verify.");
-                return;
-            }
-
             LogMessage("Starting batch verification process...");
             UpdateStatusBar("Starting verification...");
             LogMessage($"Using DolphinTool: {_dolphinToolPath}");
@@ -1114,36 +1176,44 @@ public partial class MainWindow : IDisposable
             if (_moveFailedFiles) LogMessage("Failed files will be moved to '_Failed' subfolder.");
             if (_moveSuccessFiles) LogMessage("Successful files will be moved to '_Success' subfolder.");
 
-            _runningTask = Task.Run(async () =>
-            {
-                try
-                {
-                    await PerformBatchVerificationAsync(_dolphinToolPath, selectedFiles,
-                        _moveFailedFiles, _moveSuccessFiles);
-                }
-                catch (OperationCanceledException)
-                {
-                    LogMessage("Verification cancelled by user.");
-                }
-                catch (Exception ex)
-                {
-                    LogMessage($"Fatal verification error: {ex.Message}");
-                    await ReportBugAsync("Unhandled exception in verification", ex);
-                }
-            });
+            var wasCancelled = false;
+            _runningTask = Task.Run(() => PerformBatchVerificationAsync(_dolphinToolPath, selectedFiles, _moveFailedFiles, _moveSuccessFiles), _cts.Token);
 
             try
             {
                 await _runningTask.ConfigureAwait(false); // resume on thread pool, not UI thread
+            }
+            catch (OperationCanceledException)
+            {
+                wasCancelled = true;
+                LogMessage("Verification cancelled by user.");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Fatal verification error: {ex.Message}");
+                await ReportBugAsync("Unhandled exception in verification", ex);
             }
             finally
             {
                 _operationTimer.Stop();
                 _processingTimeUpdateTimer?.Stop();
                 UpdateProcessingTimeDisplay();
-                UpdateStatusBar("Verification completed");
+                UpdateStatusBar(wasCancelled ? "Verification cancelled" : "Verification completed");
                 await SetControlsStateAsync(true);
-                await LogOperationSummaryAsync("verify", "Verification");
+                if (!wasCancelled)
+                {
+                    await LogOperationSummaryAsync("verify", "Verification");
+                }
+                else
+                {
+                    LogMessage("--- Batch verification cancelled. ---");
+                }
+
+                // Refresh the verification file list to reflect any moved files
+                if (!string.IsNullOrEmpty(VerifyFolderTextBox.Text) && Directory.Exists(VerifyFolderTextBox.Text))
+                {
+                    PopulateVerificationFilesList(VerifyFolderTextBox.Text);
+                }
             }
         }
         catch (Exception ex)
@@ -1161,6 +1231,8 @@ public partial class MainWindow : IDisposable
 
             await Dispatcher.InvokeAsync(() =>
             {
+                FileProgressBar.IsIndeterminate = true;
+                FileProgressBar.Value = 0;
                 ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
                 ProgressBar.Value = 0;
             });
@@ -1190,6 +1262,14 @@ public partial class MainWindow : IDisposable
             LogMessage($"Error during batch verification: {ex.Message}");
             ShowError($"Error during batch verification: {ex.Message}");
             await ReportBugAsync("Error during batch verification operation", ex);
+        }
+        finally
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                FileProgressBar.IsIndeterminate = false;
+                FileProgressBar.Value = 0;
+            });
         }
     }
 
@@ -1283,12 +1363,9 @@ public partial class MainWindow : IDisposable
             Dispatcher.BeginInvoke(() =>
             {
                 var percentage = total == 0 ? 0 : (double)current / total * 100;
-                ProgressText.Text = $"{operationVerb} file {current} of {total}: {currentFileName} ({percentage:F1}%)";
-
-                // Also update status bar with simpler message
                 if (FindName("StatusBarText") is System.Windows.Controls.TextBlock statusBarText)
                 {
-                    statusBarText.Text = $"{operationVerb} {currentFileName}...";
+                    statusBarText.Text = $"{operationVerb} file {current} of {total}: {currentFileName} ({percentage:F1}%)";
                 }
             });
         }

@@ -84,7 +84,7 @@ public class FileItem : INotifyPropertyChanged
         string[] suffix = ["B", "KB", "MB", "GB", "TB"];
         int i;
         double dblSByte = bytes;
-        for (i = 0; i < suffix.Length && bytes >= 1024; i++, bytes /= 1024)
+        for (i = 0; i < suffix.Length - 1 && bytes >= 1024; i++, bytes /= 1024)
         {
             dblSByte = bytes / 1024.0;
         }

@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using SharpCompress.Archives;
 
 namespace BatchConvertToRVZ.services;
 
@@ -54,11 +56,7 @@ public class ConversionService
             _logMessage("Processing files sequentially.");
             foreach (var inputFile in files)
             {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    _logMessage("Operation canceled by user.");
-                    break;
-                }
+                cancellationToken.ThrowIfCancellationRequested();
 
                 var fileName = Path.GetFileName(inputFile);
                 _logMessage($"Processing: {fileName}");
@@ -91,6 +89,7 @@ public class ConversionService
         catch (OperationCanceledException)
         {
             _logMessage("Batch conversion operation was canceled.");
+            throw;
         }
         catch (Exception ex)
         {
@@ -167,7 +166,7 @@ public class ConversionService
         {
             _logMessage($"Extracting archive: {archiveFileName}");
 
-            var extractionResult = await ExtractArchiveAsync(archivePath);
+            var extractionResult = await ExtractArchiveAsync(archivePath, cancellationToken);
             if (!extractionResult.Success)
             {
                 _logMessage($"Failed to extract {archiveFileName}: {extractionResult.ErrorMessage}");
@@ -224,7 +223,7 @@ public class ConversionService
         CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileName(inputFile);
-        var outputFileName = Path.ChangeExtension(fileName, ".rvz");
+        var outputFileName = _fileService.GetBaseFileNameWithoutGameExtension(fileName) + ".rvz";
         var outputFile = Path.Combine(outputFolder, outputFileName);
 
         try
@@ -297,21 +296,32 @@ public class ConversionService
 
             process.EnableRaisingEvents = true;
 
-            var outputBuilder = new StringBuilder();
+            var outputQueue = new ConcurrentQueue<string>();
+            var outputCompleted = new TaskCompletionSource<bool>();
+            var errorCompleted = new TaskCompletionSource<bool>();
+
             process.OutputDataReceived += (_, args) =>
             {
-                if (!string.IsNullOrEmpty(args.Data))
+                if (args.Data is null)
                 {
-                    outputBuilder.AppendLine(args.Data);
+                    outputCompleted.TrySetResult(true);
+                }
+                else
+                {
+                    outputQueue.Enqueue(args.Data);
                     _logMessage($"[DolphinTool] {args.Data}");
                 }
             };
 
             process.ErrorDataReceived += (_, args) =>
             {
-                if (!string.IsNullOrEmpty(args.Data))
+                if (args.Data is null)
                 {
-                    outputBuilder.AppendLine(args.Data);
+                    errorCompleted.TrySetResult(true);
+                }
+                else
+                {
+                    outputQueue.Enqueue(args.Data);
                     _logMessage($"[DolphinTool ERROR] {args.Data}");
                 }
             };
@@ -321,7 +331,10 @@ public class ConversionService
             process.BeginErrorReadLine();
 
             await process.WaitForExitAsync(cancellationToken);
+            await Task.WhenAll(outputCompleted.Task, errorCompleted.Task);
 
+            var outputBuilder = new StringBuilder();
+            while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
             var output = outputBuilder.ToString();
             if (process.ExitCode == 0 && output.Contains("Successfully converted"))
             {
@@ -346,10 +359,9 @@ public class ConversionService
         }
     }
 
-    private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractArchiveAsync(string archivePath)
+    private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractArchiveAsync(string archivePath, CancellationToken cancellationToken)
     {
         var tempDir = string.Empty;
-        string extractedFilePath;
 
         try
         {
@@ -359,35 +371,35 @@ public class ConversionService
 
             _logMessage($"Extracting archive to temporary directory: {tempDir}");
 
-            // For now, implement a basic extraction that copies the archive
-            // This is a temporary workaround until SharpCompress API issues are resolved
-            _logMessage("NOTE: Archive extraction is using basic implementation.");
-            _logMessage("Full SharpCompress integration requires API compatibility fixes.");
+            using var archive = ArchiveFactory.OpenArchive(archivePath);
+            var supportedExtensions = _fileService.GetPrimaryTargetExtensionsInsideArchive();
 
-            // Basic implementation: copy the archive
-            var fileName = Path.GetFileName(archivePath);
-            extractedFilePath = Path.Combine(tempDir, fileName);
+            var entry = archive.Entries.FirstOrDefault(e =>
+                e is { IsDirectory: false, Key: not null } &&
+                supportedExtensions.Any(ext => e.Key.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
 
-            // Use async file copy
-            await Task.Run(() => File.Copy(archivePath, extractedFilePath, true));
-
-            _logMessage($"Copied archive to temporary location: {fileName}");
-
-            // Check if the file has a supported extension using _fileService
-            var extension = Path.GetExtension(fileName).ToLowerInvariant();
-            var supportedExtensions = _fileService.GetAllSupportedInputExtensions();
-
-            if (!supportedExtensions.Contains(extension))
+            if (entry == null)
             {
-                _logMessage($"Warning: Archive file {fileName} doesn't have a supported extension.");
-                _logMessage($"Supported extensions are: {string.Join(", ", supportedExtensions)}");
-            }
-            else
-            {
-                _logMessage($"Archive file {fileName} has supported extension: {extension}");
+                var archiveName = Path.GetFileName(archivePath);
+                return (false, string.Empty, string.Empty, $"No supported disc image found inside {archiveName}.");
             }
 
-            return (true, extractedFilePath, tempDir, "Archive extraction using basic implementation. Full SharpCompress integration pending.");
+            var entryName = Path.GetFileName(entry.Key);
+            if (string.IsNullOrWhiteSpace(entryName))
+            {
+                entryName = Path.GetFileNameWithoutExtension(archivePath);
+            }
+
+            var extractedFilePath = Path.Combine(tempDir, entryName);
+
+            await using (var source = await entry.OpenEntryStreamAsync(cancellationToken))
+            await using (var destination = File.Create(extractedFilePath))
+            {
+                await source.CopyToAsync(destination, cancellationToken);
+            }
+
+            _logMessage($"Extracted {entryName} from archive.");
+            return (true, extractedFilePath, tempDir, string.Empty);
         }
         catch (Exception ex)
         {

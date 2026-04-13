@@ -46,7 +46,7 @@ public class VerificationService
             _logMessage("Verifying files sequentially.");
             foreach (var inputFile in files)
             {
-                if (cancellationToken.IsCancellationRequested) break;
+                cancellationToken.ThrowIfCancellationRequested();
 
                 var fileName = Path.GetFileName(inputFile);
                 var baseFolder = Path.GetDirectoryName(inputFile) ?? string.Empty;
@@ -74,6 +74,7 @@ public class VerificationService
         catch (OperationCanceledException)
         {
             _logMessage("Batch verification operation was canceled.");
+            throw;
         }
         catch (Exception ex)
         {
@@ -121,19 +122,32 @@ public class VerificationService
             process.EnableRaisingEvents = true;
 
             var outputQueue = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            var outputCompleted = new TaskCompletionSource<bool>();
+            var errorCompleted = new TaskCompletionSource<bool>();
+
             outputHandler = (_, args) =>
             {
-                if (string.IsNullOrEmpty(args.Data)) return;
-
-                outputQueue.Enqueue(args.Data);
-                _logMessage($"[DolphinTool] {args.Data}");
+                if (args.Data is null)
+                {
+                    outputCompleted.TrySetResult(true);
+                }
+                else
+                {
+                    outputQueue.Enqueue(args.Data);
+                    _logMessage($"[DolphinTool] {args.Data}");
+                }
             };
             errorHandler = (_, args) =>
             {
-                if (string.IsNullOrEmpty(args.Data)) return;
-
-                outputQueue.Enqueue(args.Data);
-                _logMessage($"[DolphinTool ERROR] {args.Data}");
+                if (args.Data is null)
+                {
+                    errorCompleted.TrySetResult(true);
+                }
+                else
+                {
+                    outputQueue.Enqueue(args.Data);
+                    _logMessage($"[DolphinTool ERROR] {args.Data}");
+                }
             };
             process.OutputDataReceived += outputHandler;
             process.ErrorDataReceived += errorHandler;
@@ -143,6 +157,7 @@ public class VerificationService
             process.BeginErrorReadLine();
 
             await process.WaitForExitAsync(token);
+            await Task.WhenAll(outputCompleted.Task, errorCompleted.Task);
 
             var outputBuilder = new StringBuilder();
             while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
@@ -173,6 +188,11 @@ public class VerificationService
         catch (OperationCanceledException)
         {
             _logMessage($"Verification canceled: {fileName}");
+            if (!process.HasExited)
+            {
+                process.Kill(true);
+            }
+
             throw;
         }
         catch (Exception ex)

@@ -342,7 +342,7 @@
         <!-- Status Bar -->
         <StatusBar Grid.Row="2">
             <StatusBarItem>
-                <TextBlock x:Name="ProgressText" Text="Ready" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Application status" />
+                        <TextBlock x:Name="StatusBarText" Text="Ready" Foreground="{StaticResource TextSecondaryBrush}" ToolTip="Application status" />
             </StatusBarItem>
         </StatusBar>
 

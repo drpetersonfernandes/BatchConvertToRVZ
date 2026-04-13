@@ -65,16 +65,6 @@ public partial class UpdateService : IDisposable
                 return (true, latestRelease);
             }
         }
-        catch (HttpRequestException)
-        {
-            // Network errors are expected during automatic checks, silently fail
-            return (false, null);
-        }
-        catch (TaskCanceledException)
-        {
-            // Timeouts/cancellations are expected during automatic checks, silently fail
-            return (false, null);
-        }
         catch (Exception ex)
         {
             // Unexpected errors should be reported for debugging
