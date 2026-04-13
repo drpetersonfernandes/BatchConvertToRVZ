@@ -3,7 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.Text.RegularExpressions;
-using BatchConvertToRVZ.models;
+using BatchConvertToRVZ.Models;
 
 namespace BatchConvertToRVZ.services;
 
@@ -12,13 +12,6 @@ namespace BatchConvertToRVZ.services;
 /// </summary>
 public partial class UpdateService : IDisposable
 {
-    // Shared static HttpClient handler to prevent socket exhaustion.
-    // Properly disposed when the application exits.
-    private static readonly Lazy<SocketsHttpHandler> SharedHandler = new(static () => new SocketsHttpHandler
-    {
-        PooledConnectionLifetime = TimeSpan.FromMinutes(2)
-    });
-
     private readonly HttpClient _httpClient;
     private readonly string _githubApiUrl;
 
@@ -32,7 +25,7 @@ public partial class UpdateService : IDisposable
 
         // Create a new HttpClient instance that shares the static handler
         // This allows per-instance headers while sharing the connection pool
-        _httpClient = new HttpClient(SharedHandler.Value, false);
+        _httpClient = new HttpClient(SharedHttpHandler.Instance, false);
 
         // GitHub API requires a User-Agent header.
         _httpClient.DefaultRequestHeaders.UserAgent.Add(
@@ -147,9 +140,6 @@ public partial class UpdateService : IDisposable
     /// </summary>
     public static void DisposeSharedHandler()
     {
-        if (SharedHandler.IsValueCreated)
-        {
-            SharedHandler.Value.Dispose();
-        }
+        SharedHttpHandler.Dispose();
     }
 }

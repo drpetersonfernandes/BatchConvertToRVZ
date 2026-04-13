@@ -1,4 +1,4 @@
-namespace BatchConvertToRVZ.models;
+namespace BatchConvertToRVZ.Models;
 
 /// <summary>
 /// Model representing system information for bug reports

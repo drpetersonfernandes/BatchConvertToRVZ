@@ -189,7 +189,7 @@ public class VerificationService
 
                 if (moveSuccess)
                 {
-                    await MoveFileToSubfolder(inputFile, baseFolder, "_Success");
+                    await MoveFileToSubfolderAsync(inputFile, baseFolder, "_Success", token);
                 }
             }
             else
@@ -200,7 +200,7 @@ public class VerificationService
 
                 if (moveFailed)
                 {
-                    await MoveFileToSubfolder(inputFile, baseFolder, "_Failed");
+                    await MoveFileToSubfolderAsync(inputFile, baseFolder, "_Failed", token);
                 }
             }
         }
@@ -245,10 +245,12 @@ public class VerificationService
         return verificationResult;
     }
 
-    private Task MoveFileToSubfolder(string sourceFilePath, string baseFolder, string subfolderName)
+    private async Task MoveFileToSubfolderAsync(string sourceFilePath, string baseFolder, string subfolderName, CancellationToken cancellationToken)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var fileName = Path.GetFileName(sourceFilePath);
             var subfolderPath = Path.Combine(baseFolder, subfolderName);
 
@@ -267,14 +269,23 @@ public class VerificationService
                 destinationPath = Path.Combine(subfolderPath, $"{nameWithoutExt}_{timestamp}{extension}");
             }
 
-            File.Move(sourceFilePath, destinationPath);
+            // Use File.Move with async support via Task.Run for cancellation
+            await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Move(sourceFilePath, destinationPath);
+            }, cancellationToken);
+
             _logMessage($"Moved {fileName} to {subfolderName} folder.");
+        }
+        catch (OperationCanceledException)
+        {
+            _logMessage($"Move file operation cancelled for {Path.GetFileName(sourceFilePath)}");
+            throw;
         }
         catch (Exception ex)
         {
             _logMessage($"Failed to move file to {subfolderName} folder: {ex.Message}");
         }
-
-        return Task.CompletedTask;
     }
 }

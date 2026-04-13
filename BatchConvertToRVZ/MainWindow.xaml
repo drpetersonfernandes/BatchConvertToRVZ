@@ -241,6 +241,69 @@
                         </Grid>
                     </Border>
                 </TabItem>
+
+                <TabItem Header="Extract" ToolTip="Extract RVZ files to ISO format">
+                    <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="0,0,6,6" Padding="15" VerticalAlignment="Stretch">
+                        <Grid VerticalAlignment="Stretch">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" /> <!-- Input -->
+                                <RowDefinition Height="Auto" /> <!-- Output -->
+                                <RowDefinition Height="Auto" /> <!-- Options -->
+                                <RowDefinition Height="Auto" /> <!-- Label -->
+                                <RowDefinition Height="*" />    <!-- DataGrid -->
+                                <RowDefinition Height="Auto" /> <!-- Buttons -->
+                                <RowDefinition Height="Auto" /> <!-- Start -->
+                            </Grid.RowDefinitions>
+
+                            <!-- Input Folder Selection -->
+                            <Grid Grid.Row="0" Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Label Content="Input Folder:" ToolTip="Select the folder containing RVZ files to extract" />
+                                <TextBox x:Name="ExtractInputFolderTextBox" Grid.Column="1" Margin="5,0" IsReadOnly="True" ToolTip="The folder containing RVZ files to be extracted" />
+                                <Button x:Name="BrowseExtractInputButton" Grid.Column="2" Content="Browse..." Click="BrowseExtractInputButton_Click" Style="{StaticResource ActionButtonStyle}" ToolTip="Browse for the input folder containing RVZ files" />
+                            </Grid>
+
+                            <!-- Output Folder Selection -->
+                            <Grid Grid.Row="1" Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Label Content="Output Folder:" ToolTip="Select where the extracted ISO files will be saved" />
+                                <TextBox x:Name="ExtractOutputFolderTextBox" Grid.Column="1" Margin="5,0" IsReadOnly="True" ToolTip="The destination folder for extracted ISO files. This must be different from the input folder." />
+                                <Button x:Name="BrowseExtractOutputButton" Grid.Column="2" Content="Browse..." Click="BrowseExtractOutputButton_Click" Style="{StaticResource ActionButtonStyle}" ToolTip="Browse for the output folder where extracted files will be saved" />
+                            </Grid>
+
+                            <GroupBox Grid.Row="2" Header="General Settings" Margin="0,5,0,10" Padding="10">
+                                <StackPanel>
+                                    <CheckBox x:Name="DeleteExtractedFilesCheckBox" Content="Delete original RVZ files after extraction" Margin="0,5" HorizontalAlignment="Left" ToolTip="WARNING: Permanently deletes source RVZ files after successful extraction. Use with caution!" />
+                                </StackPanel>
+                            </GroupBox>
+
+                            <Label Grid.Row="3" Content="Select Files to Extract:" Margin="0,5,0,0" FontWeight="Bold" />
+                            <Grid Grid.Row="4" Margin="0,5" VerticalAlignment="Stretch">
+                                <DataGrid x:Name="ExtractionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" IsThreeState="False" />
+                                        <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Size" Binding="{Binding DisplaySize}" Width="130" IsReadOnly="True" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
+                            <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,10">
+                                <Button Content="Select All" Click="SelectAllExtraction_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
+                                <Button Content="Deselect All" Click="DeselectAllExtraction_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
+                            </StackPanel>
+
+                            <Button Grid.Row="6" x:Name="StartExtractionButton" Content="Start Extraction" Click="StartExtractionButton_Click" Style="{StaticResource StartButtonStyle}" HorizontalAlignment="Stretch" ToolTip="Begin the batch extraction process" />
+                        </Grid>
+                    </Border>
+                </TabItem>
             </TabControl>
 
             <GridSplitter x:Name="Splitter" Grid.Column="1" Grid.Row="0" Width="5"

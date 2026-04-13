@@ -29,6 +29,7 @@ public partial class MainWindow : IDisposable
     private readonly services.UpdateService _updateService;
     private readonly services.ConversionService _conversionService;
     private readonly services.VerificationService _verificationService;
+    private readonly services.ExtractionService _extractionService;
     private readonly services.FileService _fileService;
 
     private const string GitHubApiUrl = "https://api.github.com/repos/drpetersonfernandes/BatchConvertToRVZ/releases/latest";
@@ -58,16 +59,30 @@ public partial class MainWindow : IDisposable
     private readonly Stopwatch _operationTimer = new();
     private System.Windows.Threading.DispatcherTimer? _processingTimeUpdateTimer;
 
-
-
+    // Write speed calculation
+    private long _totalBytesProcessed;
+    private DateTime _speedCalculationStartTime;
+    private readonly object _speedLock = new();
 
     // Fields for verification move options
     private bool _moveFailedFiles;
     private bool _moveSuccessFiles;
 
+    // Current operation type for proper cancellation messaging
+    private enum OperationType
+    {
+        None,
+        Conversion,
+        Verification,
+        Extraction
+    }
+
+    private OperationType _currentOperation = OperationType.None;
+
     // File lists for UI
     private readonly BindingList<Models.FileItem> _conversionFiles = new();
     private readonly BindingList<Models.FileItem> _verificationFiles = new();
+    private readonly BindingList<Models.FileItem> _extractionFiles = new();
 
     private void UpdateOverallProgress()
     {
@@ -136,8 +151,12 @@ public partial class MainWindow : IDisposable
         _fileService = new services.FileService(LogMessage);
         _conversionService = new services.ConversionService(
             LogMessage,
-            message => ReportBugAsync(message));
+            message => ReportBugAsync(message),
+            _fileService);
         _verificationService = new services.VerificationService(
+            LogMessage,
+            message => ReportBugAsync(message));
+        _extractionService = new services.ExtractionService(
             LogMessage,
             message => ReportBugAsync(message));
 
@@ -148,6 +167,15 @@ public partial class MainWindow : IDisposable
         LogMessage("");
         LogMessage("Use the 'Convert' tab to convert ISO files or archives to RVZ.");
         LogMessage("Use the 'Verify Integrity' tab to check your existing RVZ files.");
+        LogMessage("Use the 'Extract' tab to convert RVZ files back to ISO format.");
+        LogMessage("");
+        LogMessage("Use the 'Convert' tab to convert ISO files or archives to RVZ.");
+        LogMessage("Use the 'Verify Integrity' tab to check your existing RVZ files.");
+        LogMessage("Use the 'Extract' tab to extract disc image contents (files inside ISO/WBFS/RVZ/etc).");
+        LogMessage("");
+        LogMessage("NOTE: RVZ files cannot be converted back to ISO format. RVZ is a compressed");
+        LogMessage("format optimized for storage. To get ISO files, convert from other formats");
+        LogMessage("(ISO, WBFS, NKit) to RVZ, keeping your original files.");
         LogMessage("");
 
         CheckDependencies();
@@ -155,6 +183,7 @@ public partial class MainWindow : IDisposable
         // Initialize DataGrids
         ConversionFilesDataGrid.ItemsSource = _conversionFiles;
         VerificationFilesDataGrid.ItemsSource = _verificationFiles;
+        ExtractionFilesDataGrid.ItemsSource = _extractionFiles;
 
         ResetOperationStats();
         InitializeProcessingTimeTimer();
@@ -199,6 +228,7 @@ public partial class MainWindow : IDisposable
             _dependenciesOk = false;
             StartConversionButton.IsEnabled = false;
             StartVerifyButton.IsEnabled = false;
+            StartExtractionButton.IsEnabled = false;
             var missingFilesString = string.Join(", ", missingFiles);
             var errorMessage = $"The following critical file(s) are missing: {missingFilesString}.\n\nThe application cannot function without them. Please ensure all files from the release archive are in the same folder as this application.";
             LogMessage($"WARNING: {errorMessage.ReplaceLineEndings(" ")}");
@@ -210,6 +240,7 @@ public partial class MainWindow : IDisposable
             _dependenciesOk = true;
             StartConversionButton.IsEnabled = true;
             StartVerifyButton.IsEnabled = true;
+            StartExtractionButton.IsEnabled = true;
             LogMessage($"{dolphinToolExeName} found in the application directory.");
             LogMessage("SharpCompress library loaded for archive extraction.");
         }
@@ -499,6 +530,7 @@ public partial class MainWindow : IDisposable
             }
 
             ResetOperationStats();
+            _currentOperation = OperationType.Conversion;
             await SetControlsStateAsync(false);
             _operationTimer.Restart();
             _processingTimeUpdateTimer?.Start();
@@ -558,8 +590,16 @@ public partial class MainWindow : IDisposable
         _cts.Cancel();
         LogMessage("Cancellation requested. Waiting for current operation(s) to complete...");
 
-        // Show extraction overlay when cancellation is requested
-        ExtractionOverlayText.Text = "Cancellation requested.\nPlease wait for the current extraction to complete...";
+        // Show appropriate overlay text based on current operation type
+        var operationName = _currentOperation switch
+        {
+            OperationType.Conversion => "conversion",
+            OperationType.Verification => "verification",
+            OperationType.Extraction => "extraction",
+            _ => "operation"
+        };
+
+        ExtractionOverlayText.Text = $"Cancellation requested.\nPlease wait for the current {operationName} to complete...";
         ExtractionOverlay.Visibility = Visibility.Visible;
     }
 
@@ -586,11 +626,19 @@ public partial class MainWindow : IDisposable
                 MoveSuccessCheckBox.IsEnabled = enabled;
                 StartVerifyButton.IsEnabled = enabled;
 
+                ExtractInputFolderTextBox.IsEnabled = enabled;
+                ExtractOutputFolderTextBox.IsEnabled = enabled;
+                BrowseExtractInputButton.IsEnabled = enabled;
+                BrowseExtractOutputButton.IsEnabled = enabled;
+                DeleteExtractedFilesCheckBox.IsEnabled = enabled;
+                StartExtractionButton.IsEnabled = enabled;
+
                 CancelButton.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
 
                 if (enabled) // If controls are enabled (operation finished or not started)
                 {
                     ClearProgressDisplay(); // Set to idle state
+                    _currentOperation = OperationType.None; // Reset operation type
 
                     // Update status bar to "Ready"
                     if (FindName("StatusBarText") is System.Windows.Controls.TextBlock statusBarText)
@@ -727,6 +775,14 @@ public partial class MainWindow : IDisposable
                     UpdateOverallProgress();
                     UpdateStatsDisplay();
                     UpdateProcessingTimeDisplay();
+                    // Track bytes for speed calculation - find file size from conversion files list
+                    var fileItem = _conversionFiles.FirstOrDefault(f => f.FileName == fileName);
+                    if (fileItem != null)
+                    {
+                        AddProcessedBytes(fileItem.FileSize);
+                    }
+
+                    CalculateAndUpdateWriteSpeed();
                 },
                 count => Interlocked.Add(ref _successCount, count),
                 count => Interlocked.Add(ref _failureCount, count),
@@ -1164,6 +1220,7 @@ public partial class MainWindow : IDisposable
             }
 
             ResetOperationStats();
+            _currentOperation = OperationType.Verification;
             await SetControlsStateAsync(false);
             _operationTimer.Restart();
             _processingTimeUpdateTimer?.Start();
@@ -1248,6 +1305,14 @@ public partial class MainWindow : IDisposable
                     UpdateOverallProgress();
                     UpdateStatsDisplay();
                     UpdateProcessingTimeDisplay();
+                    // Track bytes for speed calculation - find file size from verification files list
+                    var fileItem = _verificationFiles.FirstOrDefault(f => f.FileName == fileName);
+                    if (fileItem != null)
+                    {
+                        AddProcessedBytes(fileItem.FileSize);
+                    }
+
+                    CalculateAndUpdateWriteSpeed();
                 },
                 count => Interlocked.Add(ref _successCount, count),
                 count => Interlocked.Add(ref _failureCount, count),
@@ -1281,11 +1346,51 @@ public partial class MainWindow : IDisposable
         _operationTimer.Reset();
         _processingTimeUpdateTimer?.Stop();
 
+        // Reset speed calculation
+        lock (_speedLock)
+        {
+            _totalBytesProcessed = 0;
+            _speedCalculationStartTime = DateTime.Now;
+        }
 
         UpdateStatsDisplay();
         UpdateProcessingTimeDisplay();
         UpdateWriteSpeedDisplay(0);
         ClearProgressDisplay();
+    }
+
+    /// <summary>
+    /// Adds processed bytes to the speed calculation.
+    /// </summary>
+    /// <param name="bytes">Number of bytes processed.</param>
+    private void AddProcessedBytes(long bytes)
+    {
+        lock (_speedLock)
+        {
+            _totalBytesProcessed += bytes;
+        }
+    }
+
+    /// <summary>
+    /// Calculates and updates the current write speed display.
+    /// </summary>
+    private void CalculateAndUpdateWriteSpeed()
+    {
+        double speedInMBps;
+        lock (_speedLock)
+        {
+            var elapsed = DateTime.Now - _speedCalculationStartTime;
+            if (elapsed.TotalSeconds > 0 && _totalBytesProcessed > 0)
+            {
+                speedInMBps = _totalBytesProcessed / (elapsed.TotalSeconds * 1024 * 1024);
+            }
+            else
+            {
+                speedInMBps = 0;
+            }
+        }
+
+        UpdateWriteSpeedDisplay(speedInMBps);
     }
 
     private void UpdateStatsDisplay()
@@ -1470,4 +1575,263 @@ public partial class MainWindow : IDisposable
             }
         }
     }
+
+    #region Extraction Tab Event Handlers
+
+    private void BrowseExtractInputButton_Click(object sender, RoutedEventArgs e)
+    {
+        var inputFolder = SelectFolder("Select the folder containing RVZ files to extract");
+        if (string.IsNullOrEmpty(inputFolder)) return;
+
+        ExtractInputFolderTextBox.Text = inputFolder;
+        LogMessage($"Extraction input folder selected: {inputFolder}");
+
+        PopulateExtractionFilesList(inputFolder);
+    }
+
+    private void PopulateExtractionFilesList(string inputFolder)
+    {
+        try
+        {
+            _extractionFiles.Clear();
+
+            var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
+                .Where(static file => file.EndsWith(".rvz", StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+            foreach (var file in files)
+            {
+                var fileInfo = new FileInfo(file);
+                _extractionFiles.Add(new Models.FileItem
+                {
+                    FileName = Path.GetFileName(file),
+                    FullPath = file,
+                    FileSize = fileInfo.Length,
+                    IsSelected = true
+                });
+            }
+
+            ExtractionFilesDataGrid.ItemsSource = _extractionFiles;
+            LogMessage($"Found {_extractionFiles.Count} RVZ files in extraction folder.");
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error populating extraction file list: {ex.Message}");
+            _ = Task.Run(() => ReportBugAsync("Error populating extraction file list", ex));
+        }
+    }
+
+    private void BrowseExtractOutputButton_Click(object sender, RoutedEventArgs e)
+    {
+        var outputFolder = SelectFolder("Select the output folder where ISO files will be saved");
+        if (string.IsNullOrEmpty(outputFolder)) return;
+
+        ExtractOutputFolderTextBox.Text = outputFolder;
+        LogMessage($"Extraction output folder selected: {outputFolder}");
+    }
+
+    private void SelectAllExtraction_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var f in _extractionFiles)
+        {
+            f.IsSelected = true;
+        }
+    }
+
+    private void DeselectAllExtraction_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var f in _extractionFiles)
+        {
+            f.IsSelected = false;
+        }
+    }
+
+    private async void StartExtractionButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!_dependenciesOk || string.IsNullOrEmpty(_dolphinToolPath))
+            {
+                var exeName = GetDolphinToolExecutableName();
+                LogMessage("Error: Critical dependencies are missing. Cannot start extraction.");
+                ShowError($"A required file (like {exeName}) is missing. Please check the application directory.");
+                return;
+            }
+
+            var inputFolder = ExtractInputFolderTextBox.Text;
+            var outputFolder = ExtractOutputFolderTextBox.Text;
+            var deleteFiles = DeleteExtractedFilesCheckBox.IsChecked ?? false;
+
+            var inputError = ValidateFolder(inputFolder, "input folder", true);
+            if (inputError != null)
+            {
+                LogMessage($"Error: {inputError}");
+                ShowError(inputError);
+                return;
+            }
+
+            var outputError = ValidateFolder(outputFolder, "output folder", false);
+            if (outputError != null)
+            {
+                LogMessage($"Error: {outputError}");
+                ShowError(outputError);
+                return;
+            }
+
+            var selectedFiles = _extractionFiles.Where(static f => f.IsSelected).Select(static f => f.FullPath).ToArray();
+            if (selectedFiles.Length == 0)
+            {
+                LogMessage("Error: No files selected for extraction.");
+                ShowError("Please select at least one file to extract.");
+                return;
+            }
+
+            if (AreSameFolder(inputFolder, outputFolder))
+            {
+                const string msg = "The input and output folders must be different directories.";
+                LogMessage($"Error: {msg}");
+                ShowError(msg);
+                return;
+            }
+
+            if (IsSubdirectory(inputFolder, outputFolder) || IsSubdirectory(outputFolder, inputFolder))
+            {
+                const string msg = "The input and output folders cannot be nested within each other.";
+                LogMessage($"Error: {msg}");
+                ShowError(msg);
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(outputFolder);
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error creating output directory {outputFolder}: {ex.Message}");
+                ShowError($"Error creating output directory: {ex.Message}");
+                await ReportBugAsync($"Error creating output directory: {outputFolder}", ex);
+                return;
+            }
+
+            if (_cts.IsCancellationRequested)
+            {
+                _cts.Dispose();
+                _cts = new CancellationTokenSource();
+            }
+
+            ResetOperationStats();
+            _currentOperation = OperationType.Extraction;
+            await SetControlsStateAsync(false);
+            _operationTimer.Restart();
+            _processingTimeUpdateTimer?.Start();
+
+            LogMessage("Starting batch extraction process...");
+            UpdateStatusBar("Starting extraction...");
+            LogMessage($"Using DolphinTool: {_dolphinToolPath}");
+            LogMessage($"Input folder: {inputFolder}");
+            LogMessage($"Output folder: {outputFolder}");
+            LogMessage($"Delete original files: {deleteFiles}");
+
+            var wasCancelled = false;
+            try
+            {
+                _runningTask = Task.Run(() => PerformBatchExtractionAsync(_dolphinToolPath, selectedFiles, outputFolder, deleteFiles), _cts.Token);
+
+                await _runningTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                wasCancelled = true;
+                LogMessage("Extraction cancelled by user.");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Fatal extraction error: {ex.Message}");
+                await ReportBugAsync("Unhandled exception in extraction", ex);
+            }
+            finally
+            {
+                _operationTimer.Stop();
+                _processingTimeUpdateTimer?.Stop();
+                UpdateProcessingTimeDisplay();
+                UpdateWriteSpeedDisplay(0);
+                UpdateStatusBar(wasCancelled ? "Extraction cancelled" : "Extraction completed");
+                await SetControlsStateAsync(true);
+                if (!wasCancelled)
+                {
+                    await LogOperationSummaryAsync("extract", "Extraction");
+                }
+                else
+                {
+                    LogMessage("--- Batch extraction cancelled. ---");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            await ReportBugAsync("Error during StartExtractionButton_Click", ex);
+        }
+    }
+
+    private async Task PerformBatchExtractionAsync(string dolphinToolPath, string[] files, string outputFolder, bool deleteFiles)
+    {
+        try
+        {
+            ResetOperationStats();
+            _totalFilesToProcess = files.Length;
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                FileProgressBar.IsIndeterminate = true;
+                FileProgressBar.Value = 0;
+                ProgressBar.Maximum = Math.Max(_totalFilesToProcess, 1);
+                ProgressBar.Value = 0;
+            });
+
+            await _extractionService.PerformBatchExtractionAsync(
+                dolphinToolPath,
+                files,
+                outputFolder,
+                deleteFiles,
+                (processed, total, fileName) =>
+                {
+                    UpdateProgressDisplay(processed, total, fileName, "Extracting");
+                    UpdateOverallProgress();
+                    UpdateStatsDisplay();
+                    UpdateProcessingTimeDisplay();
+                    // Track bytes for speed calculation - find file size from extraction files list
+                    var fileItem = _extractionFiles.FirstOrDefault(f => f.FileName == fileName);
+                    if (fileItem != null)
+                    {
+                        AddProcessedBytes(fileItem.FileSize);
+                    }
+
+                    CalculateAndUpdateWriteSpeed();
+                },
+                count => Interlocked.Add(ref _successCount, count),
+                count => Interlocked.Add(ref _failureCount, count),
+                _cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            LogMessage("Batch extraction operation was canceled.");
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error during batch extraction: {ex.Message}");
+            ShowError($"Error during batch extraction: {ex.Message}");
+            await ReportBugAsync("Error during batch extraction operation", ex);
+        }
+        finally
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                FileProgressBar.IsIndeterminate = false;
+                FileProgressBar.Value = 0;
+            });
+        }
+    }
+
+    #endregion
 }

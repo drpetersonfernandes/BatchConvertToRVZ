@@ -2,7 +2,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using BatchConvertToRVZ.models;
+using BatchConvertToRVZ.Models;
 
 namespace BatchConvertToRVZ.services;
 
@@ -12,13 +12,6 @@ namespace BatchConvertToRVZ.services;
 /// </summary>
 public class BugReportService : IDisposable
 {
-    // Shared static HttpClient handler to prevent socket exhaustion.
-    // Properly disposed when the application exits.
-    private static readonly Lazy<SocketsHttpHandler> SharedHandler = new(static () => new SocketsHttpHandler
-    {
-        PooledConnectionLifetime = TimeSpan.FromMinutes(2)
-    });
-
     private readonly HttpClient _httpClient;
     private readonly string _apiUrl;
     private readonly string _apiKey;
@@ -40,7 +33,7 @@ public class BugReportService : IDisposable
 
         // Create a new HttpClient instance that shares the static handler
         // This allows per-instance headers while sharing the connection pool
-        _httpClient = new HttpClient(SharedHandler.Value, false);
+        _httpClient = new HttpClient(SharedHttpHandler.Instance, false);
 
         // Set default headers once in the constructor for thread safety
         _httpClient.DefaultRequestHeaders.Add("X-API-KEY", _apiKey);
@@ -142,9 +135,6 @@ public class BugReportService : IDisposable
     /// </summary>
     public static void DisposeSharedHandler()
     {
-        if (SharedHandler.IsValueCreated)
-        {
-            SharedHandler.Value.Dispose();
-        }
+        SharedHttpHandler.Dispose();
     }
 }

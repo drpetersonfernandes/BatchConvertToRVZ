@@ -22,13 +22,15 @@ public class ConversionService
     /// </summary>
     /// <param name="logMessage">Action to log messages.</param>
     /// <param name="reportBugAsync">Function to report bugs asynchronously.</param>
+    /// <param name="fileService">FileService instance to use for file operations.</param>
     public ConversionService(
         Action<string> logMessage,
-        Func<string, Task> reportBugAsync)
+        Func<string, Task> reportBugAsync,
+        FileService fileService)
     {
         _logMessage = logMessage;
         _reportBugAsync = reportBugAsync;
-        _fileService = new FileService(logMessage);
+        _fileService = fileService;
     }
 
     /// <summary>
@@ -400,10 +402,17 @@ public class ConversionService
                 return (false, string.Empty, string.Empty, $"No supported disc image found inside {archiveName}.");
             }
 
-            var entryName = Path.GetFileName(entry.Key);
+            // Extract the file name from the entry key, handling potential directory separators
+            var entryName = entry.Key?.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+            entryName = Path.GetFileName(entryName);
+
+            // If entry name is still invalid, create one from archive name preserving the extension
             if (string.IsNullOrWhiteSpace(entryName))
             {
-                entryName = Path.GetFileNameWithoutExtension(archivePath);
+                var archiveName = Path.GetFileNameWithoutExtension(archivePath);
+                var entryExtension = supportedExtensions.FirstOrDefault(ext =>
+                    entry.Key?.EndsWith(ext, StringComparison.OrdinalIgnoreCase) == true) ?? ".iso";
+                entryName = $"{archiveName}{entryExtension}";
             }
 
             var extractedFilePath = Path.Combine(tempDir, entryName);

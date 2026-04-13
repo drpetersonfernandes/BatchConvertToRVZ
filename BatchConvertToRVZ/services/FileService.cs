@@ -10,13 +10,9 @@ public class FileService
 {
     private readonly Action<string> _logMessage;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="FileService"/> class.
-    /// </summary>
-    /// <param name="logMessage">Action to log messages.</param>
-
     // Supported input extensions
     private static readonly string[] AllSupportedInputExtensions = [".iso", ".gcm", ".wbfs", ".rvz", ".zip", ".7z", ".rar"];
+
     private static readonly string[] ArchiveExtensions = [".zip", ".7z", ".rar"];
     private static readonly string[] PrimaryTargetExtensionsInsideArchive = [".iso", ".gcm", ".wbfs", ".rvz", ".nkit.iso"];
     private static readonly string[] RvzExtension = [".rvz"];
@@ -84,11 +80,24 @@ public class FileService
 
     /// <summary>
     /// Determines whether the specified file is a supported input file.
+    /// Handles compound extensions like .nkit.iso correctly.
     /// </summary>
     /// <param name="filePath">The file path.</param>
     /// <returns>true if the file is supported; otherwise, false.</returns>
     public bool IsSupportedInputFile(string filePath)
     {
+        var fileName = Path.GetFileName(filePath).ToLowerInvariant();
+
+        // Check for compound extensions first (e.g., .nkit.iso)
+        foreach (var ext in AllSupportedInputExtensions)
+        {
+            if (fileName.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        // Fallback to standard extension check
         var extension = Path.GetExtension(filePath).ToLowerInvariant();
         return AllSupportedInputExtensions.Contains(extension);
     }
