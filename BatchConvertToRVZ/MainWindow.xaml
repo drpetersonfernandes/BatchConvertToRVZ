@@ -68,7 +68,7 @@
             </Grid.RowDefinitions>
 
             <TabControl Grid.Column="0" Grid.Row="0" x:Name="MainTabControl" Background="Transparent" BorderThickness="0" VerticalAlignment="Stretch">
-                <TabItem Header="Convert" ToolTip="Batch convert GameCube/Wii ISO images to RVZ">
+                <TabItem Header="Convert to RVZ" ToolTip="Batch convert GameCube/Wii ISO images to RVZ">
                     <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="0,0,6,6" Padding="15" VerticalAlignment="Stretch">
                         <Grid VerticalAlignment="Stretch">
                             <Grid.RowDefinitions>
@@ -173,7 +173,8 @@
 
                             <Label Grid.Row="3" Content="Select Files to Convert:" Margin="0,5,0,0" FontWeight="Bold" />
                             <Grid Grid.Row="4" Margin="0,5" VerticalAlignment="Stretch">
-                                <DataGrid x:Name="ConversionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader">
+                                <DataGrid x:Name="ConversionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader"
+                                          AllowDrop="True" Drop="ConversionFilesDataGrid_Drop" DragOver="ConversionFilesDataGrid_DragOver" ToolTip="Drag and drop ISO, GCM, WBFS, GCZ, WIA, NKIT.ISO, ZIP, 7Z, or RAR files here">
                                     <DataGrid.Columns>
                                         <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" IsThreeState="False" />
                                         <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" IsReadOnly="True" />
@@ -191,7 +192,7 @@
                     </Border>
                 </TabItem>
 
-                <TabItem Header="Verify Integrity" ToolTip="Verify the integrity of existing RVZ files">
+                <TabItem Header="Verify Integrity of RVZ" ToolTip="Verify the integrity of existing RVZ files">
                     <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="0,0,6,6" Padding="15" VerticalAlignment="Stretch">
                         <Grid VerticalAlignment="Stretch">
                             <Grid.RowDefinitions>
@@ -224,7 +225,8 @@
 
                             <Label Grid.Row="2" Content="Select Files to Verify:" Margin="0,5,0,0" FontWeight="Bold" />
                             <Grid Grid.Row="3" Margin="0,5" VerticalAlignment="Stretch">
-                                <DataGrid x:Name="VerificationFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader">
+                                <DataGrid x:Name="VerificationFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader"
+                                          AllowDrop="True" Drop="VerificationFilesDataGrid_Drop" DragOver="VerificationFilesDataGrid_DragOver" ToolTip="Drag and drop RVZ files here">
                                     <DataGrid.Columns>
                                         <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" IsThreeState="False" />
                                         <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" IsReadOnly="True" />
@@ -242,7 +244,7 @@
                     </Border>
                 </TabItem>
 
-                <TabItem Header="Extract" ToolTip="Extract RVZ files to ISO format">
+                <TabItem Header="Extract from RVZ" ToolTip="Extract RVZ files">
                     <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="0,0,6,6" Padding="15" VerticalAlignment="Stretch">
                         <Grid VerticalAlignment="Stretch">
                             <Grid.RowDefinitions>
@@ -282,12 +284,22 @@
                             <GroupBox Grid.Row="2" Header="General Settings" Margin="0,5,0,10" Padding="10">
                                 <StackPanel>
                                     <CheckBox x:Name="DeleteExtractedFilesCheckBox" Content="Delete original RVZ files after extraction" Margin="0,5" HorizontalAlignment="Left" ToolTip="WARNING: Permanently deletes source RVZ files after successful extraction. Use with caution!" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                        <Label Content="Output Format:" VerticalAlignment="Center" />
+                                        <ComboBox x:Name="ExtractOutputFormatComboBox" Width="120" Margin="5,0,0,0" SelectedIndex="0" ToolTip="Select the output format for extracted files">
+                                            <ComboBoxItem Content="ISO" />
+                                            <ComboBoxItem Content="WBFS" />
+                                            <ComboBoxItem Content="GCZ" />
+                                            <ComboBoxItem Content="WIA" />
+                                        </ComboBox>
+                                    </StackPanel>
                                 </StackPanel>
                             </GroupBox>
 
                             <Label Grid.Row="3" Content="Select Files to Extract:" Margin="0,5,0,0" FontWeight="Bold" />
                             <Grid Grid.Row="4" Margin="0,5" VerticalAlignment="Stretch">
-                                <DataGrid x:Name="ExtractionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader">
+                                <DataGrid x:Name="ExtractionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader"
+                                          AllowDrop="True" Drop="ExtractionFilesDataGrid_Drop" DragOver="ExtractionFilesDataGrid_DragOver" ToolTip="Drag and drop RVZ, ZIP, 7Z, or RAR files here">
                                     <DataGrid.Columns>
                                         <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="80" IsThreeState="False" />
                                         <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" IsReadOnly="True" />

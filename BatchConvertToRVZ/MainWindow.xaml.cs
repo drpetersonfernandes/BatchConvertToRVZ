@@ -158,24 +158,15 @@ public partial class MainWindow : IDisposable
             message => ReportBugAsync(message));
         _extractionService = new services.ExtractionService(
             LogMessage,
-            message => ReportBugAsync(message));
+            message => ReportBugAsync(message),
+            _fileService);
 
         LogMessage("Welcome to the Batch Convert to RVZ.");
         LogMessage("");
-        LogMessage("This program will convert GameCube/Wii disc images (.iso, .gcm, .wbfs, .nkit.iso, .rvz) to RVZ format.");
-        LogMessage("It also supports extracting game images from ZIP, 7Z, and RAR archives.");
+        LogMessage("Use the 'Convert to RVZ' tab to convert ISO, GCM, WBFS, GCZ, WIA or NKIT.ISO files to RVZ.");
+        LogMessage("Use the 'Verify Integrity of RVZ' tab to check the integrity of RVZ files.");
+        LogMessage("Use the 'Extract from RVZ' tab to convert RVZ files to ISO, WBFS, GCZ or WIA format.");
         LogMessage("");
-        LogMessage("Use the 'Convert' tab to convert ISO files or archives to RVZ.");
-        LogMessage("Use the 'Verify Integrity' tab to check your existing RVZ files.");
-        LogMessage("Use the 'Extract' tab to convert RVZ files back to ISO format.");
-        LogMessage("");
-        LogMessage("Use the 'Convert' tab to convert ISO files or archives to RVZ.");
-        LogMessage("Use the 'Verify Integrity' tab to check your existing RVZ files.");
-        LogMessage("Use the 'Extract' tab to extract disc image contents (files inside ISO/WBFS/RVZ/etc).");
-        LogMessage("");
-        LogMessage("NOTE: RVZ files cannot be converted back to ISO format. RVZ is a compressed");
-        LogMessage("format optimized for storage. To get ISO files, convert from other formats");
-        LogMessage("(ISO, WBFS, NKit) to RVZ, keeping your original files.");
         LogMessage("");
 
         CheckDependencies();
@@ -860,9 +851,45 @@ public partial class MainWindow : IDisposable
     // Synchronous wrapper for backward compatibility - uses InvokeAsync internally
     private void ShowMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxImage icon)
     {
-        // Use GetAwaiter().GetResult() is safe here because the async operation runs on the UI thread
-        // and we're just waiting for it to complete
-        ShowMessageBoxAsync(message, title, buttons, icon).GetAwaiter().GetResult();
+        // Check if we're already on the UI thread to avoid deadlock
+        if (Application.Current.Dispatcher.CheckAccess())
+        {
+            // Already on UI thread, show message box directly
+            try
+            {
+                Window? owner = null;
+                try
+                {
+                    if (!_disposed && IsLoaded)
+                    {
+                        var helper = new System.Windows.Interop.WindowInteropHelper(this);
+                        if (helper.Handle != IntPtr.Zero)
+                        {
+                            owner = this;
+                        }
+                    }
+                }
+                catch
+                {
+                    // If we can't access the window properties, we'll just show without an owner.
+                }
+
+                if (owner != null)
+                    MessageBox.Show(owner, message, title, buttons, icon);
+                else
+                    MessageBox.Show(message, title, buttons, icon);
+            }
+            catch
+            {
+                // Last resort fallback
+                MessageBox.Show(message, title, buttons, icon);
+            }
+        }
+        else
+        {
+            // Not on UI thread, use InvokeAsync
+            ShowMessageBoxAsync(message, title, buttons, icon).GetAwaiter().GetResult();
+        }
     }
 
     private void ShowError(string message)
@@ -1661,6 +1688,7 @@ public partial class MainWindow : IDisposable
             var inputFolder = ExtractInputFolderTextBox.Text;
             var outputFolder = ExtractOutputFolderTextBox.Text;
             var deleteFiles = DeleteExtractedFilesCheckBox.IsChecked ?? false;
+            var outputFormat = ExtractOutputFormatComboBox.Text.ToLowerInvariant();
 
             var inputError = ValidateFolder(inputFolder, "input folder", true);
             if (inputError != null)
@@ -1731,12 +1759,13 @@ public partial class MainWindow : IDisposable
             LogMessage($"Using DolphinTool: {_dolphinToolPath}");
             LogMessage($"Input folder: {inputFolder}");
             LogMessage($"Output folder: {outputFolder}");
+            LogMessage($"Output format: {outputFormat.ToUpperInvariant()}");
             LogMessage($"Delete original files: {deleteFiles}");
 
             var wasCancelled = false;
             try
             {
-                _runningTask = Task.Run(() => PerformBatchExtractionAsync(_dolphinToolPath, selectedFiles, outputFolder, deleteFiles), _cts.Token);
+                _runningTask = Task.Run(() => PerformBatchExtractionAsync(_dolphinToolPath, selectedFiles, outputFolder, deleteFiles, outputFormat), _cts.Token);
 
                 await _runningTask.ConfigureAwait(false);
             }
@@ -1774,7 +1803,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private async Task PerformBatchExtractionAsync(string dolphinToolPath, string[] files, string outputFolder, bool deleteFiles)
+    private async Task PerformBatchExtractionAsync(string dolphinToolPath, string[] files, string outputFolder, bool deleteFiles, string outputFormat)
     {
         try
         {
@@ -1794,6 +1823,7 @@ public partial class MainWindow : IDisposable
                 files,
                 outputFolder,
                 deleteFiles,
+                outputFormat,
                 (processed, total, fileName) =>
                 {
                     UpdateProgressDisplay(processed, total, fileName, "Extracting");
@@ -1830,6 +1860,134 @@ public partial class MainWindow : IDisposable
                 FileProgressBar.IsIndeterminate = false;
                 FileProgressBar.Value = 0;
             });
+        }
+    }
+
+    #endregion
+
+    #region Drag and Drop Event Handlers
+
+    private void ConversionFilesDataGrid_DragOver(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            e.Effects = DragDropEffects.Copy;
+        }
+        else
+        {
+            e.Effects = DragDropEffects.None;
+        }
+
+        e.Handled = true;
+    }
+
+    private void ConversionFilesDataGrid_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            if (e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            {
+                HandleDroppedFiles(files, "conversion");
+            }
+        }
+    }
+
+    private void VerificationFilesDataGrid_DragOver(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            e.Effects = DragDropEffects.Copy;
+        }
+        else
+        {
+            e.Effects = DragDropEffects.None;
+        }
+
+        e.Handled = true;
+    }
+
+    private void VerificationFilesDataGrid_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            if (e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            {
+                HandleDroppedFiles(files, "verification");
+            }
+        }
+    }
+
+    private void ExtractionFilesDataGrid_DragOver(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            e.Effects = DragDropEffects.Copy;
+        }
+        else
+        {
+            e.Effects = DragDropEffects.None;
+        }
+
+        e.Handled = true;
+    }
+
+    private void ExtractionFilesDataGrid_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            if (e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            {
+                HandleDroppedFiles(files, "extraction");
+            }
+        }
+    }
+
+    private void HandleDroppedFiles(string[] files, string target)
+    {
+        if (files.Length == 0) return;
+
+        try
+        {
+            var folderPath = files.FirstOrDefault(Directory.Exists);
+
+            if (folderPath != null)
+            {
+                // If a folder was dropped, use it as the input folder
+                switch (target)
+                {
+                    case "conversion":
+                        InputFolderTextBox.Text = folderPath;
+                        LogMessage($"Input folder selected via drag-and-drop: {folderPath}");
+                        PopulateConversionFilesList(folderPath);
+                        break;
+                    case "verification":
+                        VerifyFolderTextBox.Text = folderPath;
+                        LogMessage($"Verification folder selected via drag-and-drop: {folderPath}");
+                        PopulateVerificationFilesList(folderPath);
+                        break;
+                    case "extraction":
+                        ExtractInputFolderTextBox.Text = folderPath;
+                        LogMessage($"Extraction input folder selected via drag-and-drop: {folderPath}");
+                        PopulateExtractionFilesList(folderPath);
+                        break;
+                }
+            }
+            else
+            {
+                // Individual files dropped - add them to the appropriate list
+                var fileList = files.Where(File.Exists).ToList();
+                if (fileList.Count > 0)
+                {
+                    LogMessage($"Dropped {fileList.Count} file(s) for {target}.");
+                    // TODO: Add support for adding individual files to the lists
+                    ShowMessageBox("Individual file drop is not yet implemented. Please drop a folder containing your files.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error handling dropped files: {ex.Message}");
+            ShowError($"Error processing dropped files: {ex.Message}");
         }
     }
 

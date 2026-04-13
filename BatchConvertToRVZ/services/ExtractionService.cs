@@ -1,28 +1,35 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using SharpCompress.Archives;
 
 namespace BatchConvertToRVZ.services;
 
 /// <summary>
 /// Service responsible for extracting RVZ files to ISO format.
+/// Supports direct RVZ files and RVZ files inside archives.
 /// </summary>
 public class ExtractionService
 {
     private readonly Action<string> _logMessage;
     private readonly Func<string, Task> _reportBugAsync;
+    private readonly FileService _fileService;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ExtractionService"/> class.
     /// </summary>
     /// <param name="logMessage">Action to log messages.</param>
     /// <param name="reportBugAsync">Function to report bugs asynchronously.</param>
+    /// <param name="fileService">FileService instance to use for file operations.</param>
     public ExtractionService(
         Action<string> logMessage,
-        Func<string, Task> reportBugAsync)
+        Func<string, Task> reportBugAsync,
+        FileService fileService)
     {
         _logMessage = logMessage;
         _reportBugAsync = reportBugAsync;
+        _fileService = fileService;
     }
 
     /// <summary>
@@ -32,6 +39,7 @@ public class ExtractionService
     /// <param name="files">Array of file paths to extract.</param>
     /// <param name="outputFolder">Output folder for extracted files.</param>
     /// <param name="deleteFiles">Whether to delete original files after successful extraction.</param>
+    /// <param name="outputFormat">Output format (iso, wbfs, gcz, wia).</param>
     /// <param name="updateProgress">Callback to update progress.</param>
     /// <param name="incrementSuccess">Callback to increment success count.</param>
     /// <param name="incrementFailure">Callback to increment failure count.</param>
@@ -41,6 +49,7 @@ public class ExtractionService
         string[] files,
         string outputFolder,
         bool deleteFiles,
+        string outputFormat,
         Action<int, int, string> updateProgress,
         Action<int> incrementSuccess,
         Action<int> incrementFailure,
@@ -69,11 +78,12 @@ public class ExtractionService
                 var fileName = Path.GetFileName(inputFile);
                 _logMessage($"Processing: {fileName}");
 
-                var success = await ExtractSingleFileAsync(
+                var success = await ProcessFileAsync(
                     dolphinToolPath,
                     inputFile,
                     outputFolder,
                     deleteFiles,
+                    outputFormat,
                     cancellationToken);
 
                 if (success)
@@ -103,21 +113,196 @@ public class ExtractionService
         }
     }
 
+    private async Task<bool> ProcessFileAsync(
+        string dolphinToolPath,
+        string inputFile,
+        string outputFolder,
+        bool deleteOriginal,
+        string outputFormat,
+        CancellationToken cancellationToken)
+    {
+        var fileName = Path.GetFileName(inputFile);
+        var inputExtension = Path.GetExtension(inputFile).ToLowerInvariant();
+
+        try
+        {
+            if (_fileService.GetArchiveExtensions().Contains(inputExtension))
+            {
+                return await ProcessArchiveFileAsync(
+                    dolphinToolPath,
+                    inputFile,
+                    outputFolder,
+                    deleteOriginal,
+                    outputFormat,
+                    cancellationToken);
+            }
+            else
+            {
+                return await ExtractSingleFileAsync(
+                    dolphinToolPath,
+                    inputFile,
+                    outputFolder,
+                    deleteOriginal,
+                    outputFormat,
+                    cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logMessage($"Processing canceled: {fileName}");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logMessage($"Error processing {fileName}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private async Task<bool> ProcessArchiveFileAsync(
+        string dolphinToolPath,
+        string archivePath,
+        string outputFolder,
+        bool deleteOriginal,
+        string outputFormat,
+        CancellationToken cancellationToken)
+    {
+        var archiveFileName = Path.GetFileName(archivePath);
+
+        try
+        {
+            _logMessage($"Extracting archive: {archiveFileName}");
+
+            var extractionResult = await ExtractRvzFromArchiveAsync(archivePath, cancellationToken);
+            if (!extractionResult.Success)
+            {
+                _logMessage($"Failed to extract {archiveFileName}: {extractionResult.ErrorMessage}");
+                return false;
+            }
+
+            var extractedFilePath = extractionResult.FilePath;
+            var tempDir = extractionResult.TempDir;
+
+            try
+            {
+                var success = await ExtractSingleFileAsync(
+                    dolphinToolPath,
+                    extractedFilePath,
+                    outputFolder,
+                    false, // Don't delete extracted file - we'll clean up temp dir
+                    outputFormat,
+                    cancellationToken);
+
+                if (success && deleteOriginal)
+                {
+                    await TryDeleteFile(archivePath, "original archive");
+                }
+
+                return success;
+            }
+            finally
+            {
+                await TryDeleteDirectory(tempDir, "temporary extraction directory");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logMessage($"Archive processing canceled: {archiveFileName}");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logMessage($"Error processing archive {archiveFileName}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractRvzFromArchiveAsync(string archivePath, CancellationToken cancellationToken)
+    {
+        var tempDir = string.Empty;
+
+        try
+        {
+            // Create temporary directory for extraction
+            tempDir = Path.Combine(Path.GetTempPath(), "BatchConvertToRVZ_Extract_" + Path.GetRandomFileName());
+            Directory.CreateDirectory(tempDir);
+
+            _logMessage($"Extracting archive to temporary directory: {tempDir}");
+
+            using var archive = ArchiveFactory.OpenArchive(archivePath);
+            var rvzExtensions = _fileService.GetRvzExtensions();
+
+            var entry = archive.Entries.FirstOrDefault(e =>
+                e is { IsDirectory: false, Key: not null } &&
+                rvzExtensions.Any(ext => e.Key.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
+
+            if (entry == null)
+            {
+                var archiveName = Path.GetFileName(archivePath);
+                return (false, string.Empty, string.Empty, $"No RVZ file found inside {archiveName}.");
+            }
+
+            // Extract the file name from the entry key, handling potential directory separators
+            var entryName = entry.Key?.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+            entryName = Path.GetFileName(entryName);
+
+            // If entry name is still invalid, create one from archive name preserving the extension
+            if (string.IsNullOrWhiteSpace(entryName))
+            {
+                var archiveName = Path.GetFileNameWithoutExtension(archivePath);
+                var entryExtension = rvzExtensions.FirstOrDefault(ext =>
+                    entry.Key?.EndsWith(ext, StringComparison.OrdinalIgnoreCase) == true) ?? ".rvz";
+                entryName = $"{archiveName}{entryExtension}";
+            }
+
+            var extractedFilePath = Path.Combine(tempDir, entryName);
+
+            await using (var source = await entry.OpenEntryStreamAsync(cancellationToken))
+            await using (var destination = File.Create(extractedFilePath))
+            {
+                await source.CopyToAsync(destination, cancellationToken);
+            }
+
+            _logMessage($"Extracted {entryName} from archive.");
+            return (true, extractedFilePath, tempDir, string.Empty);
+        }
+        catch (Exception ex)
+        {
+            _logMessage($"Error extracting archive {Path.GetFileName(archivePath)}: {ex.Message}");
+
+            // Clean up on failure
+            if (!string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
+            {
+                try
+                {
+                    Directory.Delete(tempDir, true);
+                }
+                catch
+                {
+                    // Ignore cleanup errors
+                }
+            }
+
+            return (false, string.Empty, string.Empty, $"Failed to extract archive: {ex.Message}");
+        }
+    }
+
     private async Task<bool> ExtractSingleFileAsync(
         string dolphinToolPath,
         string inputFile,
         string outputFolder,
         bool deleteOriginal,
+        string outputFormat,
         CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileName(inputFile);
         var fileNameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
-        var outputFileName = fileNameWithoutExt + ".iso";
+        var outputFileName = fileNameWithoutExt + "." + outputFormat.ToLowerInvariant();
         var outputFile = Path.Combine(outputFolder, outputFileName);
 
         try
         {
-            _logMessage($"Converting to ISO: {fileName} -> {outputFileName}");
+            _logMessage($"Converting to {outputFormat.ToUpperInvariant()}: {fileName} -> {outputFileName}");
 
             // Check if output file already exists and delete it
             if (File.Exists(outputFile))
@@ -134,10 +319,11 @@ public class ExtractionService
                 }
             }
 
-            var success = await ConvertToIsoAsync(
+            var success = await ConvertToFormatAsync(
                 dolphinToolPath,
                 inputFile,
                 outputFile,
+                outputFormat,
                 cancellationToken);
 
             if (success && deleteOriginal)
@@ -159,10 +345,11 @@ public class ExtractionService
         }
     }
 
-    private async Task<bool> ConvertToIsoAsync(
+    private async Task<bool> ConvertToFormatAsync(
         string dolphinToolPath,
         string inputFile,
         string outputFile,
+        string outputFormat,
         CancellationToken cancellationToken)
     {
         using var process = new Process();
@@ -184,27 +371,36 @@ public class ExtractionService
             process.StartInfo.ArgumentList.Add("-o");
             process.StartInfo.ArgumentList.Add(outputFile);
             process.StartInfo.ArgumentList.Add("-f");
-            process.StartInfo.ArgumentList.Add("iso");
+            process.StartInfo.ArgumentList.Add(outputFormat.ToLowerInvariant());
 
             process.EnableRaisingEvents = true;
 
-            var outputBuilder = new StringBuilder();
-            var errorBuilder = new StringBuilder();
+            var outputQueue = new ConcurrentQueue<string>();
+            var outputCompleted = new TaskCompletionSource<bool>();
+            var errorCompleted = new TaskCompletionSource<bool>();
 
             process.OutputDataReceived += (_, args) =>
             {
-                if (args.Data != null)
+                if (args.Data is null)
                 {
-                    outputBuilder.AppendLine(args.Data);
+                    outputCompleted.TrySetResult(true);
+                }
+                else
+                {
+                    outputQueue.Enqueue(args.Data);
                     _logMessage($"[DolphinTool] {args.Data}");
                 }
             };
 
             process.ErrorDataReceived += (_, args) =>
             {
-                if (args.Data != null)
+                if (args.Data is null)
                 {
-                    errorBuilder.AppendLine(args.Data);
+                    errorCompleted.TrySetResult(true);
+                }
+                else
+                {
+                    outputQueue.Enqueue(args.Data);
                     _logMessage($"[DolphinTool ERROR] {args.Data}");
                 }
             };
@@ -214,19 +410,22 @@ public class ExtractionService
             process.BeginErrorReadLine();
 
             await process.WaitForExitAsync(cancellationToken);
+            await Task.WhenAll(outputCompleted.Task, errorCompleted.Task);
 
+            var outputBuilder = new StringBuilder();
+            while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
             var output = outputBuilder.ToString();
-            var error = errorBuilder.ToString();
+            var error = string.Empty;
 
-            // Standardize success check: exit code 0 AND success message in output AND file exists
-            if (process.ExitCode == 0 && output.Contains("Successfully converted"))
+            // Success check: exit code 0 AND file exists
+            if (process.ExitCode == 0)
             {
                 // Wait for the file to be written (with timeout)
                 var fileExists = await WaitForFileExistsAsync(outputFile, cancellationToken);
 
                 if (fileExists)
                 {
-                    _logMessage($"Successfully converted to ISO: {Path.GetFileName(outputFile)}");
+                    _logMessage($"Successfully converted to {outputFormat.ToUpperInvariant()}: {Path.GetFileName(outputFile)}");
                     return true;
                 }
                 else
@@ -291,5 +490,23 @@ public class ExtractionService
             _logMessage($"Failed to delete {description} {Path.GetFileName(filePath)}: {ex.Message}");
             return Task.FromResult(false);
         }
+    }
+
+    private Task TryDeleteDirectory(string dirPath, string description)
+    {
+        try
+        {
+            if (Directory.Exists(dirPath))
+            {
+                Directory.Delete(dirPath, true);
+                _logMessage($"Deleted {description}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logMessage($"Failed to delete {description}: {ex.Message}");
+        }
+
+        return Task.CompletedTask;
     }
 }

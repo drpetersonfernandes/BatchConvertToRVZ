@@ -358,7 +358,7 @@ public class ConversionService
             var outputBuilder = new StringBuilder();
             while (outputQueue.TryDequeue(out var line)) outputBuilder.AppendLine(line);
             var output = outputBuilder.ToString();
-            if (process.ExitCode == 0 && output.Contains("Successfully converted"))
+            if (process.ExitCode == 0)
             {
                 _logMessage($"Successfully converted to RVZ: {Path.GetFileName(inputFile)}");
                 return true;
