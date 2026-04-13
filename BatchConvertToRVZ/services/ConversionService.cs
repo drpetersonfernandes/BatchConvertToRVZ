@@ -7,15 +7,21 @@ using SharpCompress.Archives;
 
 namespace BatchConvertToRVZ.services;
 
+/// <summary>
+/// Service responsible for converting game disc images to RVZ format.
+/// Supports direct file conversion and extraction from archives.
+/// </summary>
 public class ConversionService
 {
     private readonly Action<string> _logMessage;
     private readonly Func<string, Task> _reportBugAsync;
     private readonly FileService _fileService;
 
-    // Supported input extensions
-    private static readonly string[] ArchiveExtensions = [".zip", ".7z", ".rar"];
-
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ConversionService"/> class.
+    /// </summary>
+    /// <param name="logMessage">Action to log messages.</param>
+    /// <param name="reportBugAsync">Function to report bugs asynchronously.</param>
     public ConversionService(
         Action<string> logMessage,
         Func<string, Task> reportBugAsync)
@@ -25,6 +31,20 @@ public class ConversionService
         _fileService = new FileService(logMessage);
     }
 
+    /// <summary>
+    /// Performs batch conversion of files to RVZ format.
+    /// </summary>
+    /// <param name="dolphinToolPath">Path to the DolphinTool executable.</param>
+    /// <param name="files">Array of file paths to convert.</param>
+    /// <param name="outputFolder">Output folder for converted files.</param>
+    /// <param name="deleteFiles">Whether to delete original files after successful conversion.</param>
+    /// <param name="compressionMethod">Compression method to use (e.g., "zstd").</param>
+    /// <param name="compressionLevel">Compression level (method-specific range).</param>
+    /// <param name="blockSize">Block size for compression.</param>
+    /// <param name="updateProgress">Callback to update progress.</param>
+    /// <param name="incrementSuccess">Callback to increment success count.</param>
+    /// <param name="incrementFailure">Callback to increment failure count.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     public async Task PerformBatchConversionAsync(
         string dolphinToolPath,
         string[] files,
@@ -113,7 +133,7 @@ public class ConversionService
 
         try
         {
-            if (ArchiveExtensions.Contains(inputExtension))
+            if (_fileService.GetArchiveExtensions().Contains(inputExtension))
             {
                 return await ProcessArchiveFileAsync(
                     dolphinToolPath,
@@ -352,10 +372,6 @@ public class ConversionService
         {
             if (!process.HasExited) process.Kill(true);
             throw;
-        }
-        finally
-        {
-            if (!process.HasExited) process.Kill(true);
         }
     }
 

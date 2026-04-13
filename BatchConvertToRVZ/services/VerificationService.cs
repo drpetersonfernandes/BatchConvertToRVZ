@@ -5,11 +5,19 @@ using System.Text;
 
 namespace BatchConvertToRVZ.services;
 
+/// <summary>
+/// Service responsible for verifying RVZ file integrity using DolphinTool.
+/// </summary>
 public class VerificationService
 {
     private readonly Action<string> _logMessage;
     private readonly Func<string, Task> _reportBugAsync;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="VerificationService"/> class.
+    /// </summary>
+    /// <param name="logMessage">Action to log messages.</param>
+    /// <param name="reportBugAsync">Function to report bugs asynchronously.</param>
     public VerificationService(
         Action<string> logMessage,
         Func<string, Task> reportBugAsync)
@@ -18,6 +26,17 @@ public class VerificationService
         _reportBugAsync = reportBugAsync;
     }
 
+    /// <summary>
+    /// Performs batch verification of RVZ files.
+    /// </summary>
+    /// <param name="dolphinToolPath">Path to the DolphinTool executable.</param>
+    /// <param name="files">Array of file paths to verify.</param>
+    /// <param name="moveFailed">Whether to move failed files to a subfolder.</param>
+    /// <param name="moveSuccess">Whether to move successful files to a subfolder.</param>
+    /// <param name="updateProgress">Callback to update progress.</param>
+    /// <param name="incrementSuccess">Callback to increment success count.</param>
+    /// <param name="incrementFailure">Callback to increment failure count.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     public async Task PerformBatchVerificationAsync(
         string dolphinToolPath,
         string[] files,
@@ -192,8 +211,6 @@ public class VerificationService
             {
                 process.Kill(true);
             }
-
-            throw;
         }
         catch (Exception ex)
         {

@@ -3,6 +3,10 @@ using System.Runtime.CompilerServices;
 
 namespace BatchConvertToRVZ.Models;
 
+/// <summary>
+/// Represents a file item in the conversion or verification list.
+/// Implements INotifyPropertyChanged for data binding support.
+/// </summary>
 public class FileItem : INotifyPropertyChanged
 {
     private bool _isSelected = true;
@@ -11,6 +15,9 @@ public class FileItem : INotifyPropertyChanged
     private long _fileSize;
     private string _displaySize = string.Empty;
 
+    /// <summary>
+    /// Gets or sets a value indicating whether the file is selected for processing.
+    /// </summary>
     public bool IsSelected
     {
         get => _isSelected;
@@ -23,6 +30,9 @@ public class FileItem : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Gets or sets the name of the file.
+    /// </summary>
     public string FileName
     {
         get => _fileName;
@@ -35,6 +45,9 @@ public class FileItem : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Gets or sets the full path to the file.
+    /// </summary>
     public string FullPath
     {
         get => _fullPath;
@@ -47,6 +60,10 @@ public class FileItem : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Gets or sets the size of the file in bytes.
+    /// When set, automatically updates the <see cref="DisplaySize"/> property.
+    /// </summary>
     public long FileSize
     {
         get => _fileSize;
@@ -60,6 +77,9 @@ public class FileItem : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Gets or sets the human-readable file size string (e.g., "1.5 GB").
+    /// </summary>
     public string DisplaySize
     {
         get => _displaySize;
@@ -72,13 +92,25 @@ public class FileItem : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Occurs when a property value changes.
+    /// </summary>
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    /// <summary>
+    /// Raises the <see cref="PropertyChanged"/> event.
+    /// </summary>
+    /// <param name="propertyName">Name of the property that changed.</param>
     protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 
+    /// <summary>
+    /// Formats a byte size into a human-readable string.
+    /// </summary>
+    /// <param name="bytes">The size in bytes.</param>
+    /// <returns>A formatted string (e.g., "1.5 GB").</returns>
     private static string FormatSize(long bytes)
     {
         string[] suffix = ["B", "KB", "MB", "GB", "TB"];

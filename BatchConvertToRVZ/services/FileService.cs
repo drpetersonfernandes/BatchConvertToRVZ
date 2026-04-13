@@ -3,9 +3,17 @@ using System.IO;
 
 namespace BatchConvertToRVZ.services;
 
+/// <summary>
+/// Service responsible for file operations and extension management.
+/// </summary>
 public class FileService
 {
     private readonly Action<string> _logMessage;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FileService"/> class.
+    /// </summary>
+    /// <param name="logMessage">Action to log messages.</param>
 
     // Supported input extensions
     private static readonly string[] AllSupportedInputExtensions = [".iso", ".gcm", ".wbfs", ".rvz", ".zip", ".7z", ".rar"];
@@ -18,43 +26,78 @@ public class FileService
         _logMessage = logMessage;
     }
 
+    /// <summary>
+    /// Gets all supported input file extensions.
+    /// </summary>
+    /// <returns>Array of supported extensions.</returns>
     public string[] GetAllSupportedInputExtensions()
     {
         return AllSupportedInputExtensions;
     }
 
+    /// <summary>
+    /// Gets archive file extensions.
+    /// </summary>
+    /// <returns>Array of archive extensions.</returns>
     public string[] GetArchiveExtensions()
     {
         return ArchiveExtensions;
     }
 
+    /// <summary>
+    /// Gets primary target extensions for files inside archives.
+    /// </summary>
+    /// <returns>Array of target extensions.</returns>
     public string[] GetPrimaryTargetExtensionsInsideArchive()
     {
         return PrimaryTargetExtensionsInsideArchive;
     }
 
+    /// <summary>
+    /// Gets RVZ file extensions.
+    /// </summary>
+    /// <returns>Array of RVZ extensions.</returns>
     public string[] GetRvzExtensions()
     {
         return RvzExtension;
     }
 
+    /// <summary>
+    /// Gets a display string of primary target extensions.
+    /// </summary>
+    /// <returns>Comma-separated list of extensions.</returns>
     public string GetPrimaryTargetExtensionsDisplay()
     {
         return string.Join(", ", PrimaryTargetExtensionsInsideArchive);
     }
 
+    /// <summary>
+    /// Determines whether the specified file is an archive.
+    /// </summary>
+    /// <param name="filePath">The file path.</param>
+    /// <returns>true if the file is an archive; otherwise, false.</returns>
     public bool IsArchiveFile(string filePath)
     {
         var extension = Path.GetExtension(filePath).ToLowerInvariant();
         return ArchiveExtensions.Contains(extension);
     }
 
+    /// <summary>
+    /// Determines whether the specified file is a supported input file.
+    /// </summary>
+    /// <param name="filePath">The file path.</param>
+    /// <returns>true if the file is supported; otherwise, false.</returns>
     public bool IsSupportedInputFile(string filePath)
     {
         var extension = Path.GetExtension(filePath).ToLowerInvariant();
         return AllSupportedInputExtensions.Contains(extension);
     }
 
+    /// <summary>
+    /// Determines whether the specified file is an RVZ file.
+    /// </summary>
+    /// <param name="filePath">The file path.</param>
+    /// <returns>true if the file is an RVZ; otherwise, false.</returns>
     public bool IsRvzFile(string filePath)
     {
         var extension = Path.GetExtension(filePath).ToLowerInvariant();
@@ -260,6 +303,12 @@ public class FileService
     /// Gets the base file name without game image extensions.
     /// Handles compound extensions like .nkit.iso correctly.
     /// </summary>
+    /// <summary>
+    /// Gets the base file name without game image extensions.
+    /// Handles compound extensions like .nkit.iso correctly.
+    /// </summary>
+    /// <param name="filePath">The file path.</param>
+    /// <returns>The base file name without game extensions.</returns>
     public string GetBaseFileNameWithoutGameExtension(string filePath)
     {
         var fileName = Path.GetFileName(filePath);

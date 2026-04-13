@@ -59,7 +59,7 @@ public partial class MainWindow : IDisposable
     private System.Windows.Threading.DispatcherTimer? _processingTimeUpdateTimer;
 
 
-    private int _activeConversionCount;
+
 
     // Fields for verification move options
     private bool _moveFailedFiles;
@@ -1280,7 +1280,7 @@ public partial class MainWindow : IDisposable
         _failureCount = 0;
         _operationTimer.Reset();
         _processingTimeUpdateTimer?.Stop();
-        Interlocked.Exchange(ref _activeConversionCount, 0);
+
 
         UpdateStatsDisplay();
         UpdateProcessingTimeDisplay();
@@ -1335,15 +1335,7 @@ public partial class MainWindow : IDisposable
         {
             Dispatcher.BeginInvoke(() =>
             {
-                if (speedInMBps <= 0 && Interlocked.CompareExchange(ref _activeConversionCount, 0, 0) > 0)
-                {
-                    // Conversion is active but speed is 0 - show "Processing..." instead of "0.0 MB/s"
-                    WriteSpeedValue.Text = "Processing...";
-                }
-                else
-                {
-                    WriteSpeedValue.Text = $"{speedInMBps:F1} MB/s";
-                }
+                WriteSpeedValue.Text = $"{speedInMBps:F1} MB/s";
             });
         }
         catch (TaskCanceledException)
