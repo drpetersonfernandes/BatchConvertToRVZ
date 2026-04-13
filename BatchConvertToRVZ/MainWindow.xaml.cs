@@ -602,6 +602,12 @@ public partial class MainWindow : IDisposable
                 token = _cts.Token;
             }
 
+            // Clear the log before starting the conversion
+            await Dispatcher.InvokeAsync(() =>
+            {
+                LogViewer.Clear();
+            });
+
             ResetOperationStats();
             _currentOperation = OperationType.Conversion;
             await SetControlsStateAsync(false);
@@ -1407,6 +1413,12 @@ public partial class MainWindow : IDisposable
                 token = _cts.Token;
             }
 
+            // Clear the log before starting the verification
+            await Dispatcher.InvokeAsync(() =>
+            {
+                LogViewer.Clear();
+            });
+
             ResetOperationStats();
             _currentOperation = OperationType.Verification;
             await SetControlsStateAsync(false);
@@ -2010,6 +2022,12 @@ public partial class MainWindow : IDisposable
 
                 token = _cts.Token;
             }
+
+            // Clear the log before starting the extraction
+            await Dispatcher.InvokeAsync(() =>
+            {
+                LogViewer.Clear();
+            });
 
             ResetOperationStats();
             _currentOperation = OperationType.Extraction;

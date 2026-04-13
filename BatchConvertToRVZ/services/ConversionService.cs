@@ -197,18 +197,50 @@ public class ConversionService
 
             var extractedFilePath = extractionResult.FilePath;
             var tempDir = extractionResult.TempDir;
+            var isRvzFile = extractionResult.IsRvzFile;
 
             try
             {
-                var success = await ConvertSingleFileAsync(
-                    dolphinToolPath,
-                    extractedFilePath,
-                    outputFolder,
-                    false, // Don't delete extracted file - we'll clean up temp dir
-                    compressionMethod,
-                    compressionLevel,
-                    blockSize,
-                    cancellationToken);
+                bool success;
+                
+                // If the extracted file is already an RVZ, just copy it directly to the output folder
+                if (isRvzFile)
+                {
+                    var fileName = Path.GetFileName(extractedFilePath);
+                    var outputFile = Path.Combine(outputFolder, fileName);
+                    
+                    _logMessage($"Found RVZ file inside archive, copying directly: {fileName}");
+                    
+                    try
+                    {
+                        // Ensure the output directory exists
+                        Directory.CreateDirectory(outputFolder);
+                        
+                        // Copy the file
+                        File.Copy(extractedFilePath, outputFile, true);
+                        _logMessage($"Successfully copied RVZ file from archive: {fileName}");
+                        
+                        success = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logMessage($"Error copying RVZ file from archive {fileName}: {ex.Message}");
+                        success = false;
+                    }
+                }
+                else
+                {
+                    // Not an RVZ file, convert it as usual
+                    success = await ConvertSingleFileAsync(
+                        dolphinToolPath,
+                        extractedFilePath,
+                        outputFolder,
+                        false, // Don't delete extracted file - we'll clean up temp dir
+                        compressionMethod,
+                        compressionLevel,
+                        blockSize,
+                        cancellationToken);
+                }
 
                 if (success && deleteOriginal)
                 {
@@ -245,28 +277,60 @@ public class ConversionService
         CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileName(inputFile);
+        var inputExtension = Path.GetExtension(inputFile).ToLowerInvariant();
         var outputFileName = _fileService.GetBaseFileNameWithoutGameExtension(fileName) + ".rvz";
         var outputFile = Path.Combine(outputFolder, outputFileName);
 
         try
         {
-            _logMessage($"Converting: {fileName} -> {outputFileName}");
-
-            var success = await ConvertToRvzAsync(
-                dolphinToolPath,
-                inputFile,
-                outputFile,
-                compressionMethod,
-                compressionLevel,
-                blockSize,
-                cancellationToken);
-
-            if (success && deleteOriginal)
+            // If the input file is already an RVZ file, just copy it to the output folder instead of converting
+            if (_fileService.IsRvzFile(inputFile))
             {
-                await TryDeleteFile(inputFile, "original file");
-            }
+                _logMessage($"File is already in RVZ format, copying: {fileName} -> {outputFileName}");
+                
+                try
+                {
+                    // Ensure the output directory exists
+                    Directory.CreateDirectory(outputFolder);
 
-            return success;
+                    // Copy the file
+                    File.Copy(inputFile, outputFile, true);
+                    _logMessage($"Successfully copied RVZ file: {fileName}");
+                    
+                    // Delete original if requested
+                    if (deleteOriginal)
+                    {
+                        await TryDeleteFile(inputFile, "original file");
+                    }
+                    
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    _logMessage($"Error copying RVZ file {fileName}: {ex.Message}");
+                    return false;
+                }
+            }
+            else
+            {
+                _logMessage($"Converting: {fileName} -> {outputFileName}");
+
+                var success = await ConvertToRvzAsync(
+                    dolphinToolPath,
+                    inputFile,
+                    outputFile,
+                    compressionMethod,
+                    compressionLevel,
+                    blockSize,
+                    cancellationToken);
+
+                if (success && deleteOriginal)
+                {
+                    await TryDeleteFile(inputFile, "original file");
+                }
+
+                return success;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -387,7 +451,7 @@ public class ConversionService
         }
     }
 
-    private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage)> ExtractArchiveAsync(string archivePath, CancellationToken cancellationToken)
+    private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage, bool IsRvzFile)> ExtractArchiveAsync(string archivePath, CancellationToken cancellationToken)
     {
         var tempDir = string.Empty;
 
@@ -401,16 +465,27 @@ public class ConversionService
 
             using var archive = ArchiveFactory.OpenArchive(archivePath);
             var supportedExtensions = _fileService.GetPrimaryTargetExtensionsInsideArchive();
+            var rvzExtensions = _fileService.GetRvzExtensions();
 
-            var entry = archive.Entries.FirstOrDefault(e =>
+            // First, check for RVZ files inside the archive
+            var rvzEntry = archive.Entries.FirstOrDefault(e =>
+                e is { IsDirectory: false, Key: not null } &&
+                rvzExtensions.Any(ext => e.Key.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
+
+            // If there's an RVZ file, prefer it over other formats
+            var entry = rvzEntry ?? archive.Entries.FirstOrDefault(e =>
                 e is { IsDirectory: false, Key: not null } &&
                 supportedExtensions.Any(ext => e.Key.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
 
             if (entry == null)
             {
                 var archiveName = Path.GetFileName(archivePath);
-                return (false, string.Empty, string.Empty, $"No supported disc image found inside {archiveName}.");
+                return (false, string.Empty, string.Empty, $"No supported disc image found inside {archiveName}.", false);
             }
+
+            // Determine if the extracted file is an RVZ
+            bool isRvzFile = rvzExtensions.Any(ext => 
+                entry.Key?.EndsWith(ext, StringComparison.OrdinalIgnoreCase) == true);
 
             // Extract the file name from the entry key, handling potential directory separators
             var entryName = entry.Key?.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
@@ -433,8 +508,15 @@ public class ConversionService
                 await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
             }
 
-            _logMessage($"Extracted {entryName} from archive.");
-            return (true, extractedFilePath, tempDir, string.Empty);
+            if (isRvzFile)
+            {
+                _logMessage($"Extracted RVZ file {entryName} from archive.");
+            }
+            else
+            {
+                _logMessage($"Extracted {entryName} from archive.");
+            }
+            return (true, extractedFilePath, tempDir, string.Empty, isRvzFile);
         }
         catch (Exception ex)
         {
@@ -453,7 +535,7 @@ public class ConversionService
                 }
             }
 
-            return (false, string.Empty, string.Empty, $"Failed to extract archive: {ex.Message}");
+            return (false, string.Empty, string.Empty, $"Failed to extract archive: {ex.Message}", false);
         }
     }
 
