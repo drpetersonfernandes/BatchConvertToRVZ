@@ -78,11 +78,17 @@ public class BugReportService : IDisposable
     {
         try
         {
-            // Format the exception details
-            var formattedMessage = FormatExceptionMessage(message, exception);
+            // Get system information with exception details
+            var systemInfo = GetSystemInfo(message, exception);
 
-            // Send the bug report
-            return await SendBugReportAsync(formattedMessage);
+            // Create the request payload using the SystemInfo model for type safety
+            var content = JsonContent.Create(systemInfo);
+
+            // Send the request
+            var response = await _httpClient.PostAsync(_apiUrl, content);
+
+            // Return true if successful
+            return response.IsSuccessStatusCode;
         }
         catch
         {
@@ -92,17 +98,13 @@ public class BugReportService : IDisposable
     }
 
     /// <summary>
-    /// Formats an exception message for inclusion in a bug report
+    /// Formats exception details for inclusion in a bug report
     /// </summary>
-    /// <param name="message">The error message</param>
     /// <param name="exception">The exception that occurred</param>
-    /// <returns>A formatted error message with exception details</returns>
-    private static string FormatExceptionMessage(string message, Exception exception)
+    /// <returns>A formatted string with exception details including stack trace</returns>
+    private static string FormatExceptionDetails(Exception exception)
     {
         var sb = new StringBuilder();
-        sb.AppendLine(message);
-        sb.AppendLine();
-        sb.AppendLine("Exception Details:");
 
         var level = 0;
         var currentException = exception;
@@ -145,9 +147,10 @@ public class BugReportService : IDisposable
     /// Gets system information for the bug report
     /// </summary>
     /// <param name="message">The error message or bug report</param>
-    private SystemInfo GetSystemInfo(string message)
+    /// <param name="exception">The exception that occurred, if any</param>
+    private SystemInfo GetSystemInfo(string message, Exception? exception = null)
     {
-        return new SystemInfo
+        var systemInfo = new SystemInfo
         {
             ApplicationName = _applicationName,
             Date = DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
@@ -158,6 +161,15 @@ public class BugReportService : IDisposable
             WindowsVersion = GetWindowsVersion(),
             Message = message
         };
+
+        // Populate exception details if an exception was provided
+        if (exception != null)
+        {
+            systemInfo.ExceptionType = exception.GetType().FullName ?? "Unknown";
+            systemInfo.ExceptionDetails = FormatExceptionDetails(exception);
+        }
+
+        return systemInfo;
     }
 
     /// <summary>

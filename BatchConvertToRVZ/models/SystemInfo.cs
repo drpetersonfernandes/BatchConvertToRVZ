@@ -44,4 +44,14 @@ public class SystemInfo
     /// Gets or sets the friendly Windows version name.
     /// </summary>
     public string WindowsVersion { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the type of the exception that occurred.
+    /// </summary>
+    public string ExceptionType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the detailed exception information including stack trace.
+    /// </summary>
+    public string ExceptionDetails { get; set; } = string.Empty;
 }

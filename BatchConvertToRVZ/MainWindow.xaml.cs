@@ -1467,10 +1467,13 @@ public partial class MainWindow : IDisposable
                 }
 
                 // Refresh the verification file list to reflect any moved files
-                if (!string.IsNullOrEmpty(VerifyFolderTextBox.Text) && Directory.Exists(VerifyFolderTextBox.Text))
+                await Dispatcher.InvokeAsync(() =>
                 {
-                    PopulateVerificationFilesList(VerifyFolderTextBox.Text);
-                }
+                    if (!string.IsNullOrEmpty(VerifyFolderTextBox.Text) && Directory.Exists(VerifyFolderTextBox.Text))
+                    {
+                        PopulateVerificationFilesList(VerifyFolderTextBox.Text);
+                    }
+                });
             }
         }
         catch (Exception ex)
