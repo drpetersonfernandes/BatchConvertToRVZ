@@ -13,18 +13,18 @@ namespace BatchConvertToRVZ.services;
 public class ExtractionService
 {
     private readonly Action<string> _logMessage;
-    private readonly Func<string, Task> _reportBugAsync;
+    private readonly Func<string, Exception?, Task> _reportBugAsync;
     private readonly FileService _fileService;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ExtractionService"/> class.
     /// </summary>
     /// <param name="logMessage">Action to log messages.</param>
-    /// <param name="reportBugAsync">Function to report bugs asynchronously.</param>
+    /// <param name="reportBugAsync">Function to report bugs asynchronously with optional exception.</param>
     /// <param name="fileService">FileService instance to use for file operations.</param>
     public ExtractionService(
         Action<string> logMessage,
-        Func<string, Task> reportBugAsync,
+        Func<string, Exception?, Task> reportBugAsync,
         FileService fileService)
     {
         _logMessage = logMessage;
@@ -125,7 +125,7 @@ public class ExtractionService
         catch (Exception ex)
         {
             _logMessage($"Error during batch extraction: {ex.Message}");
-            await _reportBugAsync($"Error during batch extraction operation: {ex.Message}");
+            await _reportBugAsync("Error during batch extraction operation", ex);
         }
     }
 

@@ -14,18 +14,18 @@ namespace BatchConvertToRVZ.services;
 public class ConversionService
 {
     private readonly Action<string> _logMessage;
-    private readonly Func<string, Task> _reportBugAsync;
+    private readonly Func<string, Exception?, Task> _reportBugAsync;
     private readonly FileService _fileService;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversionService"/> class.
     /// </summary>
     /// <param name="logMessage">Action to log messages.</param>
-    /// <param name="reportBugAsync">Function to report bugs asynchronously.</param>
+    /// <param name="reportBugAsync">Function to report bugs asynchronously with optional exception.</param>
     /// <param name="fileService">FileService instance to use for file operations.</param>
     public ConversionService(
         Action<string> logMessage,
-        Func<string, Task> reportBugAsync,
+        Func<string, Exception?, Task> reportBugAsync,
         FileService fileService)
     {
         _logMessage = logMessage;
@@ -116,7 +116,7 @@ public class ConversionService
         catch (Exception ex)
         {
             _logMessage($"Error during batch conversion: {ex.Message}");
-            await _reportBugAsync($"Error during batch conversion operation: {ex.Message}");
+            await _reportBugAsync("Error during batch conversion operation", ex);
         }
     }
 

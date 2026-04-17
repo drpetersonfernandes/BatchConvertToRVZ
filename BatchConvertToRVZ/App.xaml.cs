@@ -1,6 +1,4 @@
-using System.Globalization;
 using System.IO;
-using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using BatchConvertToRVZ.services;
@@ -145,12 +143,12 @@ public partial class App
     {
         try
         {
-            var message = BuildExceptionReport(exception, source);
+            var message = $"Error Source: {source}";
 
-            // Notify developer
+            // Notify developer using the exception overload for proper formatting
             if (BugReportServiceInstance != null)
             {
-                var reportTask = BugReportServiceInstance.SendBugReportAsync(message);
+                var reportTask = BugReportServiceInstance.SendBugReportAsync(message, exception);
 
                 if (isFatal)
                 {
@@ -168,41 +166,6 @@ public partial class App
         catch
         {
             // Silently ignore any errors in the reporting process
-        }
-    }
-
-    private static string BuildExceptionReport(Exception exception, string source)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Error Source: {source}");
-        sb.AppendLine();
-        sb.AppendLine("Exception Details:");
-        AppendExceptionDetails(sb, exception);
-        return sb.ToString();
-    }
-
-    private static void AppendExceptionDetails(StringBuilder sb, Exception exception, int level = 0)
-    {
-        while (true)
-        {
-            var indent = new string(' ', level * 2);
-
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Type: {exception.GetType().FullName}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Message: {exception.Message}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Source: {exception.Source}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}StackTrace:");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}{exception.StackTrace}");
-
-            // If there's an inner exception, include it too
-            if (exception.InnerException != null)
-            {
-                sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Inner Exception:");
-                exception = exception.InnerException;
-                level += 1;
-                continue;
-            }
-
-            break;
         }
     }
 }

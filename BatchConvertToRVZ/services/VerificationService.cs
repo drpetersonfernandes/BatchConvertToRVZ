@@ -11,16 +11,16 @@ namespace BatchConvertToRVZ.services;
 public class VerificationService
 {
     private readonly Action<string> _logMessage;
-    private readonly Func<string, Task> _reportBugAsync;
+    private readonly Func<string, Exception?, Task> _reportBugAsync;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="VerificationService"/> class.
     /// </summary>
     /// <param name="logMessage">Action to log messages.</param>
-    /// <param name="reportBugAsync">Function to report bugs asynchronously.</param>
+    /// <param name="reportBugAsync">Function to report bugs asynchronously with optional exception.</param>
     public VerificationService(
         Action<string> logMessage,
-        Func<string, Task> reportBugAsync)
+        Func<string, Exception?, Task> reportBugAsync)
     {
         _logMessage = logMessage;
         _reportBugAsync = reportBugAsync;
@@ -98,7 +98,7 @@ public class VerificationService
         catch (Exception ex)
         {
             _logMessage($"Error during batch verification: {ex.Message}");
-            await _reportBugAsync($"Error during batch verification operation: {ex.Message}");
+            await _reportBugAsync("Error during batch verification operation", ex);
         }
     }
 

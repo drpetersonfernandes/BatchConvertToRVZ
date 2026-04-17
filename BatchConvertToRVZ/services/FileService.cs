@@ -31,15 +31,6 @@ public class FileService
     }
 
     /// <summary>
-    /// Gets all supported input file extensions.
-    /// </summary>
-    /// <returns>Array of supported extensions.</returns>
-    public string[] GetAllSupportedInputExtensions()
-    {
-        return AllSupportedInputExtensions;
-    }
-
-    /// <summary>
     /// Gets archive file extensions.
     /// </summary>
     /// <returns>Array of archive extensions.</returns>
@@ -73,15 +64,6 @@ public class FileService
     public string[] GetExtractionInputExtensions()
     {
         return ExtractionInputExtensions;
-    }
-
-    /// <summary>
-    /// Gets a display string of primary target extensions.
-    /// </summary>
-    /// <returns>Comma-separated list of extensions.</returns>
-    public string GetPrimaryTargetExtensionsDisplay()
-    {
-        return string.Join(", ", PrimaryTargetExtensionsInsideArchive);
     }
 
     /// <summary>
@@ -303,23 +285,6 @@ public class FileService
         catch (Exception ex)
         {
             _logMessage($"Failed to move file to {subfolderName} folder: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Gets the size of a file in bytes.
-    /// </summary>
-    /// <param name="filePath">The file path.</param>
-    /// <returns>The file size in bytes, or 0 if the file doesn't exist or an error occurs.</returns>
-    public long GetFileSize(string filePath)
-    {
-        try
-        {
-            return new FileInfo(filePath).Length;
-        }
-        catch
-        {
-            return 0;
         }
     }
 

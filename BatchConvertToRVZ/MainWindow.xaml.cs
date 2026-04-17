@@ -4,12 +4,10 @@ using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading.Channels;
 using System.Windows;
 using Microsoft.Win32;
 using IDisposable = System.IDisposable;
-using StringComparer = System.StringComparer;
 
 namespace BatchConvertToRVZ;
 
@@ -165,14 +163,14 @@ public partial class MainWindow : IDisposable
         _fileService = new services.FileService(LogMessage);
         _conversionService = new services.ConversionService(
             LogMessage,
-            message => ReportBugAsync(message),
+            ReportBugAsync,
             _fileService);
         _verificationService = new services.VerificationService(
             LogMessage,
-            message => ReportBugAsync(message));
+            ReportBugAsync);
         _extractionService = new services.ExtractionService(
             LogMessage,
-            message => ReportBugAsync(message),
+            ReportBugAsync,
             _fileService);
 
         LogMessage("Welcome to the Batch Convert to RVZ.");
@@ -1017,58 +1015,26 @@ public partial class MainWindow : IDisposable
         ShowMessageBox(message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
-    private async Task ReportBugAsync(string message, Exception? exception = null)
+    private static async Task ReportBugAsync(string message, Exception? exception = null)
     {
         try
         {
-            var report = new StringBuilder();
-            report.AppendLine(message);
+            if (App.BugReportServiceInstance == null) return;
 
             if (exception != null)
             {
-                report.AppendLine();
-                report.AppendLine("Exception Details:");
-                AppendExceptionDetailsToReport(report, exception);
+                // Use the exception overload for proper formatting with all required fields
+                await App.BugReportServiceInstance.SendBugReportAsync(message, exception);
             }
-
-            if (LogViewer != null)
+            else
             {
-                var logContent = string.Empty;
-                await Application.Current.Dispatcher.InvokeAsync(() => logContent = LogViewer.Text);
-                if (!string.IsNullOrEmpty(logContent))
-                {
-                    report.AppendLine().AppendLine("=== Application Log ===").Append(logContent);
-                }
+                // No exception, just send the message
+                await App.BugReportServiceInstance.SendBugReportAsync(message);
             }
-
-            if (App.BugReportServiceInstance != null) await App.BugReportServiceInstance.SendBugReportAsync(report.ToString());
         }
         catch
         {
             /* Silently fail reporting */
-        }
-    }
-
-    private static void AppendExceptionDetailsToReport(StringBuilder sb, Exception? ex, int level = 0)
-    {
-        while (ex != null)
-        {
-            var indent = new string(' ', level * 2);
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Type: {ex.GetType().FullName}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Message: {ex.Message}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Source: {ex.Source}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}StackTrace:");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}{ex.StackTrace}");
-            if (ex.InnerException != null)
-            {
-                sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Inner Exception:");
-                ex = ex.InnerException;
-                level++;
-            }
-            else
-            {
-                break;
-            }
         }
     }
 

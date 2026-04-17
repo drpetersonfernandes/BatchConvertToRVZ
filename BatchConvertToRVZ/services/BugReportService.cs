@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Reflection;
@@ -152,20 +153,29 @@ public class BugReportService : IDisposable
     {
         var systemInfo = new SystemInfo
         {
-            ApplicationName = _applicationName,
+            // === Environment Details ===
             Date = DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
+            ApplicationName = _applicationName,
             ApplicationVersion = _applicationVersion,
             OsVersion = Environment.OSVersion.ToString(),
             Architecture = RuntimeInformation.ProcessArchitecture.ToString().ToUpperInvariant(),
             Bitness = Environment.Is64BitOperatingSystem ? "64-bit" : "32-bit",
             WindowsVersion = GetWindowsVersion(),
+            ProcessorCount = Environment.ProcessorCount,
+            BaseDirectory = AppDomain.CurrentDomain.BaseDirectory,
+            TempPath = Path.GetTempPath(),
+
+            // === Error Details ===
             Message = message
         };
 
-        // Populate exception details if an exception was provided
+        // === Exception Details ===
         if (exception != null)
         {
             systemInfo.ExceptionType = exception.GetType().FullName ?? "Unknown";
+            systemInfo.ExceptionMessage = exception.Message;
+            systemInfo.ExceptionSource = exception.Source ?? "Unknown";
+            systemInfo.StackTrace = exception.StackTrace ?? "No stack trace available";
             systemInfo.ExceptionDetails = FormatExceptionDetails(exception);
         }
 
