@@ -73,7 +73,7 @@ public partial class UpdateService : IDisposable
     /// Normalizes a version to always have 4 components (Major, Minor, Build, Revision).
     /// This ensures consistent comparisons between tags like "1.8.1" and assembly versions like "1.8.1.0".
     /// </summary>
-    private static Version? NormalizeVersion(Version? v)
+    internal static Version? NormalizeVersion(Version? v)
     {
         if (v == null) return null;
 
@@ -98,7 +98,7 @@ public partial class UpdateService : IDisposable
     /// </summary>
     /// <param name="tagName">The tag name (e.g., "v1.2.3", "release-1.2.3", "v1.2", "v1.7.1-beta.1").</param>
     /// <returns>A <see cref="Version"/> object or null if parsing fails.</returns>
-    private static Version? ParseVersionFromTag(string tagName)
+    internal static Version? ParseVersionFromTag(string tagName)
     {
         if (string.IsNullOrWhiteSpace(tagName))
             return null;

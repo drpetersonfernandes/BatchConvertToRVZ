@@ -103,7 +103,7 @@ public class BugReportService : IDisposable
     /// </summary>
     /// <param name="exception">The exception that occurred</param>
     /// <returns>A formatted string with exception details including stack trace</returns>
-    private static string FormatExceptionDetails(Exception exception)
+    internal static string FormatExceptionDetails(Exception exception)
     {
         var sb = new StringBuilder();
 
@@ -185,7 +185,7 @@ public class BugReportService : IDisposable
     /// <summary>
     /// Gets a friendly Windows version name
     /// </summary>
-    private static string GetWindowsVersion()
+    internal static string GetWindowsVersion()
     {
         var osVersion = Environment.OSVersion;
         if (osVersion.Platform == PlatformID.Win32NT)

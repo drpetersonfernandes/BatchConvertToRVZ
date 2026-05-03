@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 
 namespace BatchConvertToRVZ.Models;
@@ -13,7 +14,7 @@ public class FileItem : INotifyPropertyChanged
     private string _fileName = string.Empty;
     private string _fullPath = string.Empty;
     private long _fileSize;
-    private string _displaySize = string.Empty;
+    private string _displaySize = FormatSize(0);
 
     /// <summary>
     /// Gets or sets a value indicating whether the file is selected for processing.
@@ -121,6 +122,6 @@ public class FileItem : INotifyPropertyChanged
             dblSByte = bytes / 1024.0;
         }
 
-        return $"{dblSByte:0.##} {suffix[i]}";
+        return string.Create(CultureInfo.InvariantCulture, $"{dblSByte:0.##} {suffix[i]}");
     }
 }
