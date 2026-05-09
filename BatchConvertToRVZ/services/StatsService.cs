@@ -71,7 +71,12 @@ public class StatsService : IDisposable
                 };
             }
         }
-        catch (Exception ex) when (ex is not HttpRequestException)
+        catch (HttpRequestException ex)
+        {
+            // Network failures are expected (offline, server down, DNS issues) - don't propagate
+            System.Diagnostics.Debug.WriteLine($"Failed to send usage stats (network): {ex.Message}");
+        }
+        catch (Exception ex)
         {
             // Log the error but don't crash the application
             System.Diagnostics.Debug.WriteLine($"Failed to send usage stats: {ex.Message}");
