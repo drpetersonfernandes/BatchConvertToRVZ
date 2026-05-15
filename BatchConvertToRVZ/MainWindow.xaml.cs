@@ -462,6 +462,19 @@ public partial class MainWindow : IDisposable
     {
         try
         {
+            // Validate folder path before attempting to enumerate files
+            if (string.IsNullOrWhiteSpace(inputFolder))
+            {
+                LogMessage("Error: Input folder path is empty.");
+                return;
+            }
+
+            if (!Directory.Exists(inputFolder))
+            {
+                LogMessage($"Error: Input folder does not exist or is inaccessible: {inputFolder}");
+                return;
+            }
+
             _conversionFiles.Clear();
 
             var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
@@ -1256,6 +1269,19 @@ public partial class MainWindow : IDisposable
     {
         try
         {
+            // Validate folder path before attempting to enumerate files
+            if (string.IsNullOrWhiteSpace(verifyFolder))
+            {
+                LogMessage("Error: Verification folder path is empty.");
+                return;
+            }
+
+            if (!Directory.Exists(verifyFolder))
+            {
+                LogMessage($"Error: Verification folder does not exist or is inaccessible: {verifyFolder}");
+                return;
+            }
+
             _verificationFiles.Clear();
 
             var files = Directory.GetFiles(verifyFolder, "*.*", SearchOption.TopDirectoryOnly)
