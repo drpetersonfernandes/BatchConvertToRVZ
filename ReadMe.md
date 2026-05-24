@@ -41,7 +41,7 @@ Batch Convert to RVZ is a comprehensive Windows application that provides a user
 - **Immediate Cancellation**: Stop extractions and conversions instantly, even for massive 8GB+ files, thanks to asynchronous I/O and cancellation token support.
 - **Optimized Logging**: High-performance log processing that handles thousands of lines without UI stuttering or high memory usage.
 - **Thread-Safe Dialogs**: Robust UI handling that prevents crashes when showing error messages or update prompts from background threads.
-- **Auto-Update Checking**: Accurate version comparison (e.g., matching `1.8.1` tags to `1.8.1.0` assembly versions) with seamless GitHub integration.
+- **Auto-Update Checking**: Accurate version comparison between GitHub release tags and assembly versions with seamless GitHub integration.
 
 ### Technical Features
 - **Asynchronous Architecture**: Fully async/await implementation to keep the UI responsive during intensive I/O and processing.
@@ -57,9 +57,15 @@ The application follows a modular architecture with clear separation of concerns
 | Component | Responsibility |
 |-----------|----------------|
 | `MainWindow` | UI coordination, user interaction handling, operation orchestration |
+| `ConversionService` | Core conversion logic, progress tracking, cancellation support |
+| `VerificationService` | RVZ integrity verification with real-time output |
+| `ExtractionService` | Archive extraction (ZIP, 7Z, RAR) with cancellation support |
+| `FileService` | File scanning, filtering, and output path management |
 | `UpdateService` | GitHub API integration for checking application updates |
 | `BugReportService` | Automatic error reporting to development team |
 | `StatsService` | Statistics tracking for conversion and verification operations |
+| `SharedHttpHandler` | Shared HttpClient configuration for update and bug report services |
+| `FileItem` | Data model for file state, progress, and status tracking |
 | `GitHubRelease` | Data model for GitHub release information |
 | `SystemInfo` | System information data model |
 | `DolphinTool` | External tool for RVZ conversion and verification |
@@ -173,21 +179,34 @@ BatchConvertToRVZ/
 ├── AboutWindow.xaml         # About dialog UI
 ├── AboutWindow.xaml.cs      # About dialog logic
 ├── services/
-│   ├── UpdateService.cs     # GitHub update checking service
 │   ├── BugReportService.cs  # Automatic error reporting service
-│   └── StatsService.cs      # Statistics tracking service
+│   ├── ConversionService.cs # Core conversion logic
+│   ├── ExtractionService.cs # Archive extraction logic
+│   ├── FileService.cs       # File scanning and filtering
+│   ├── SharedHttpHandler.cs # Shared HTTP client configuration
+│   ├── StatsService.cs      # Statistics tracking service
+│   ├── UpdateService.cs     # GitHub update checking service
+│   └── VerificationService.cs # RVZ integrity verification
 ├── models/
+│   ├── FileItem.cs          # File state and progress tracking model
 │   ├── GitHubRelease.cs     # GitHub API response model
 │   └── SystemInfo.cs        # System information model
 ├── icon/                    # Application icons
 ├── images/                  # UI images (menu icons, logo)
-└── DolphinTool*.exe         # External conversion/verification tool
+├── DolphinTool*.exe         # External conversion/verification tool
+└── BatchConvertToRVZ.Tests/ # Unit tests (xUnit)
 ```
 
 ### Building from Source
 1. Install [.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 2. Clone the repository
 3. Run `dotnet build` or open in Visual Studio / JetBrains Rider
+
+### Running Tests
+The project includes unit tests covering models and services using xUnit:
+```bash
+dotnet test
+```
 
 ## Acknowledgements
 

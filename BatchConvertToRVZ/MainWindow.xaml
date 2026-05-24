@@ -220,6 +220,7 @@
                                 <StackPanel>
                                     <CheckBox x:Name="MoveFailedCheckBox" Content="Move failed RVZ files to '_Failed' subfolder" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Move files that fail verification to a separate folder" />
                                     <CheckBox x:Name="MoveSuccessCheckBox" Content="Move successful RVZ files to '_Success' subfolder" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Move successfully verified files to a separate folder" />
+                                    <CheckBox x:Name="IncludeSubfoldersVerifyCheckBox" Content="Include subfolders" Margin="0,5" HorizontalAlignment="Left" IsChecked="False" ToolTip="Search for RVZ files in subfolders as well" Checked="IncludeSubfoldersVerify_Changed" Unchecked="IncludeSubfoldersVerify_Changed" />
                                 </StackPanel>
                             </GroupBox>
 

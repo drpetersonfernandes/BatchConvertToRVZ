@@ -160,7 +160,7 @@ public partial class MainWindow : IDisposable
         _updateService = new services.UpdateService(GitHubApiUrl);
 
         // Initialize service classes
-        _fileService = new services.FileService(LogMessage);
+        _fileService = new services.FileService();
         _conversionService = new services.ConversionService(
             LogMessage,
             ReportBugAsync,
@@ -1286,6 +1286,15 @@ public partial class MainWindow : IDisposable
         PopulateVerificationFilesList(verifyFolder);
     }
 
+    private void IncludeSubfoldersVerify_Changed(object sender, RoutedEventArgs e)
+    {
+        var verifyFolder = VerifyFolderTextBox.Text;
+        if (!string.IsNullOrEmpty(verifyFolder) && Directory.Exists(verifyFolder))
+        {
+            PopulateVerificationFilesList(verifyFolder);
+        }
+    }
+
     private void PopulateVerificationFilesList(string verifyFolder)
     {
         try
@@ -1305,7 +1314,11 @@ public partial class MainWindow : IDisposable
 
             _verificationFiles.Clear();
 
-            var files = Directory.GetFiles(verifyFolder, "*.*", SearchOption.TopDirectoryOnly)
+            var searchOption = (IncludeSubfoldersVerifyCheckBox?.IsChecked ?? false)
+                ? SearchOption.AllDirectories
+                : SearchOption.TopDirectoryOnly;
+
+            var files = Directory.GetFiles(verifyFolder, "*.*", searchOption)
                 .Where(file => _fileService.IsRvzFile(file))
                 .ToArray();
 
@@ -1322,7 +1335,8 @@ public partial class MainWindow : IDisposable
             }
 
             VerificationFilesDataGrid.ItemsSource = _verificationFiles;
-            LogMessage($"Found {_verificationFiles.Count} RVZ files in verification folder.");
+            var includeSubfolders = IncludeSubfoldersVerifyCheckBox?.IsChecked ?? false;
+            LogMessage($"Found {_verificationFiles.Count} RVZ files in verification folder {(includeSubfolders ? "(including subfolders)" : "(top level only)")}.");
         }
         catch (Exception ex)
         {

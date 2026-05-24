@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Reflection;
@@ -51,7 +50,7 @@ public class BugReportService : IDisposable
     {
         try
         {
-            var systemInfo = GetSystemInfo(message);
+            var systemInfo = GetSystemInfo();
             var payload = BuildApiPayload(message, null, systemInfo);
             var content = JsonContent.Create(payload);
             var response = await _httpClient.PostAsync(_apiUrl, content);
@@ -73,7 +72,7 @@ public class BugReportService : IDisposable
     {
         try
         {
-            var systemInfo = GetSystemInfo(message, exception);
+            var systemInfo = GetSystemInfo();
             var payload = BuildApiPayload(message, exception, systemInfo);
             var content = JsonContent.Create(payload);
             var response = await _httpClient.PostAsync(_apiUrl, content);
@@ -83,42 +82,6 @@ public class BugReportService : IDisposable
         {
             return false;
         }
-    }
-
-    /// <summary>
-    /// Formats exception details for inclusion in a bug report
-    /// </summary>
-    /// <param name="exception">The exception that occurred</param>
-    /// <returns>A formatted string with exception details including stack trace</returns>
-    internal static string FormatExceptionDetails(Exception exception)
-    {
-        var sb = new StringBuilder();
-
-        var level = 0;
-        var currentException = exception;
-
-        while (currentException != null)
-        {
-            var indent = new string(' ', level * 2);
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Type: {currentException.GetType().FullName}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Message: {currentException.Message}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Source: {currentException.Source}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}StackTrace:");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}{currentException.StackTrace}");
-
-            if (currentException.InnerException != null)
-            {
-                sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Inner Exception:");
-                currentException = currentException.InnerException;
-                level++;
-            }
-            else
-            {
-                break;
-            }
-        }
-
-        return sb.ToString();
     }
 
     /// <summary>
@@ -165,8 +128,6 @@ public class BugReportService : IDisposable
         sb.AppendLine(CultureInfo.InvariantCulture, $"Bitness: {systemInfo.Bitness}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"Windows Version: {systemInfo.WindowsVersion}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"Processor Count: {systemInfo.ProcessorCount}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Base Directory: {systemInfo.BaseDirectory}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"Temp Path: {systemInfo.TempPath}");
 
         sb.AppendLine();
         sb.AppendLine("=== Error Details ===");
@@ -206,9 +167,7 @@ public class BugReportService : IDisposable
     /// <summary>
     /// Gets system information for the bug report
     /// </summary>
-    /// <param name="message">The error message or bug report</param>
-    /// <param name="exception">The exception that occurred, if any</param>
-    private SystemInfo GetSystemInfo(string message, Exception? exception = null)
+    private SystemInfo GetSystemInfo()
     {
         var systemInfo = new SystemInfo
         {
@@ -219,20 +178,8 @@ public class BugReportService : IDisposable
             Architecture = RuntimeInformation.ProcessArchitecture.ToString().ToUpperInvariant(),
             Bitness = Environment.Is64BitOperatingSystem ? "64-bit" : "32-bit",
             WindowsVersion = GetWindowsVersion(),
-            ProcessorCount = Environment.ProcessorCount,
-            BaseDirectory = AppDomain.CurrentDomain.BaseDirectory,
-            TempPath = Path.GetTempPath(),
-            Message = message
+            ProcessorCount = Environment.ProcessorCount
         };
-
-        if (exception != null)
-        {
-            systemInfo.ExceptionType = exception.GetType().FullName ?? "Unknown";
-            systemInfo.ExceptionMessage = exception.Message;
-            systemInfo.ExceptionSource = exception.Source ?? "Unknown";
-            systemInfo.StackTrace = exception.StackTrace ?? "No stack trace available";
-            systemInfo.ExceptionDetails = FormatExceptionDetails(exception);
-        }
 
         return systemInfo;
     }
