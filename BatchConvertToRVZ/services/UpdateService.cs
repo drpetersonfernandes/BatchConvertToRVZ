@@ -33,6 +33,17 @@ public partial class UpdateService : IDisposable
     }
 
     /// <summary>
+    /// Initializes a new instance with a custom <see cref="HttpMessageHandler"/> for testing.
+    /// </summary>
+    internal UpdateService(string githubApiUrl, HttpMessageHandler handler)
+    {
+        _githubApiUrl = githubApiUrl;
+        _httpClient = new HttpClient(handler, false);
+        _httpClient.DefaultRequestHeaders.UserAgent.Add(
+            new ProductInfoHeaderValue("BatchConvertToRVZ", GetCurrentVersion().ToString()));
+    }
+
+    /// <summary>
     /// Checks for a new version of the application.
     /// </summary>
     /// <returns>

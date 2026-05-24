@@ -215,6 +215,7 @@ public class VerificationService
         catch (Exception ex)
         {
             _logMessage($"Error verifying {fileName}: {ex.Message}");
+            await _reportBugAsync($"Error verifying file: {fileName}", ex);
             verificationResult = false;
         }
         finally

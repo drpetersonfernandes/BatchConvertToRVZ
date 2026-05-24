@@ -262,4 +262,68 @@ public class FileServiceTests : IDisposable
     {
         Assert.Equal(expected, _fileService.ChangeExtension(path, newExt));
     }
+
+    [Fact]
+    public void FileExistsReturnsTrueForExistingFile()
+    {
+        var filePath = Path.Combine(_testDir, "exists.txt");
+        File.WriteAllText(filePath, "test");
+
+        Assert.True(_fileService.FileExists(filePath));
+    }
+
+    [Fact]
+    public void FileExistsReturnsFalseForMissingFile()
+    {
+        Assert.False(_fileService.FileExists(Path.Combine(_testDir, "missing.txt")));
+    }
+
+    [Fact]
+    public void DirectoryExistsReturnsTrueForExistingDirectory()
+    {
+        Assert.True(_fileService.DirectoryExists(_testDir));
+    }
+
+    [Fact]
+    public void DirectoryExistsReturnsFalseForMissingDirectory()
+    {
+        Assert.False(_fileService.DirectoryExists(Path.Combine(_testDir, "missing_dir")));
+    }
+
+    [Fact]
+    public void GetFileNameWithoutExtensionReturnsExpectedResult()
+    {
+        var result = _fileService.GetFileNameWithoutExtension(@"C:\folder\game.iso");
+
+        Assert.Equal("game", result);
+    }
+
+    [Theory]
+    [InlineData(@"C:\folder\game.iso", @"C:\folder")]
+    [InlineData(@"C:\folder\sub\game.iso", @"C:\folder\sub")]
+    [InlineData("game.iso", "")]
+    public void GetDirectoryNameReturnsExpectedResult(string path, string expected)
+    {
+        var result = _fileService.GetDirectoryName(path);
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void GetTempPathReturnsNonEmptyString()
+    {
+        var result = _fileService.GetTempPath();
+
+        Assert.NotNull(result);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void GetRandomFileNameReturnsNonEmptyString()
+    {
+        var result = _fileService.GetRandomFileName();
+
+        Assert.NotNull(result);
+        Assert.NotEmpty(result);
+    }
 }

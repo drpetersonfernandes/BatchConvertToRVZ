@@ -168,6 +168,7 @@ public class ConversionService
         catch (Exception ex)
         {
             _logMessage($"Error processing {fileName}: {ex.Message}");
+            await _reportBugAsync($"Error processing file: {fileName}", ex);
             return false;
         }
     }
@@ -244,14 +245,14 @@ public class ConversionService
 
                 if (success && deleteOriginal)
                 {
-                    await TryDeleteFile(archivePath, "original archive");
+                    await TryDeleteFileAsync(archivePath, "original archive");
                 }
 
                 return success;
             }
             finally
             {
-                await TryDeleteDirectory(tempDir, "temporary extraction directory");
+                await TryDeleteDirectoryAsync(tempDir, "temporary extraction directory");
             }
         }
         catch (OperationCanceledException)
@@ -262,6 +263,7 @@ public class ConversionService
         catch (Exception ex)
         {
             _logMessage($"Error processing archive {archiveFileName}: {ex.Message}");
+            await _reportBugAsync($"Error processing archive: {archiveFileName}", ex);
             return false;
         }
     }
@@ -299,7 +301,7 @@ public class ConversionService
                     // Delete original if requested
                     if (deleteOriginal)
                     {
-                        await TryDeleteFile(inputFile, "original file");
+                        await TryDeleteFileAsync(inputFile, "original file");
                     }
 
                     return true;
@@ -325,7 +327,7 @@ public class ConversionService
 
                 if (success && deleteOriginal)
                 {
-                    await TryDeleteFile(inputFile, "original file");
+                    await TryDeleteFileAsync(inputFile, "original file");
                 }
 
                 return success;
@@ -339,6 +341,7 @@ public class ConversionService
         catch (Exception ex)
         {
             _logMessage($"Error converting {fileName}: {ex.Message}");
+            await _reportBugAsync($"Error converting file: {fileName}", ex);
             return false;
         }
     }
@@ -520,7 +523,9 @@ public class ConversionService
         }
         catch (Exception ex)
         {
-            _logMessage($"Error extracting archive {Path.GetFileName(archivePath)}: {ex.Message}");
+            var archiveName = Path.GetFileName(archivePath);
+            _logMessage($"Error extracting archive {archiveName}: {ex.Message}");
+            await _reportBugAsync($"Error extracting archive: {archiveName}", ex);
 
             // Clean up on failure
             if (!string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
@@ -539,7 +544,7 @@ public class ConversionService
         }
     }
 
-    private Task<bool> TryDeleteFile(string filePath, string description)
+    private Task<bool> TryDeleteFileAsync(string filePath, string description)
     {
         try
         {
@@ -559,7 +564,7 @@ public class ConversionService
         }
     }
 
-    private Task TryDeleteDirectory(string dirPath, string description)
+    private Task TryDeleteDirectoryAsync(string dirPath, string description)
     {
         try
         {

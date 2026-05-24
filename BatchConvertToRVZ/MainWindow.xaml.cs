@@ -191,6 +191,7 @@ public partial class MainWindow : IDisposable
         ResetOperationStats();
         InitializeProcessingTimeTimer();
         Loaded += MainWindow_Loaded;
+        Closed += MainWindow_Closed;
     }
 
     private void InitializeProcessingTimeTimer()
@@ -301,13 +302,19 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    private void MainWindow_Closed(object? sender, EventArgs e)
+    {
+        _ = Task.Run(Dispose);
+    }
+
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         lock (_closingLock)
         {
             if (_isClosing)
             {
-                e.Cancel = true;
+                // Allow the close to proceed — this is triggered by Application.Current.Shutdown()
+                // after a running operation was cancelled. Do NOT cancel here.
                 return;
             }
 
@@ -344,7 +351,21 @@ public partial class MainWindow : IDisposable
             finally
             {
                 // Force-exit on the UI thread regardless of task state
-                _ = Dispatcher.BeginInvoke(static () => Application.Current?.Shutdown());
+                _ = Dispatcher.BeginInvoke(static () =>
+                {
+                    try
+                    {
+                        Application.Current?.Shutdown();
+                    }
+                    catch
+                    {
+                        // If Shutdown fails, fall back to Environment.Exit
+                        Environment.Exit(0);
+                    }
+                });
+
+                // Double-fallback: if Shutdown hasn't worked within 3 seconds, force-exit
+                _ = Task.Delay(3000).ContinueWith(static _ => Environment.Exit(0));
             }
         });
     }
@@ -1087,7 +1108,7 @@ public partial class MainWindow : IDisposable
         }
         catch (Exception ex)
         {
-            _ = App.BugReportServiceInstance?.SendBugReportAsync($"Error checking for updates: {ex.Message}");
+            _ = ReportBugAsync("Error checking for updates", ex);
         }
     }
 
@@ -1168,7 +1189,7 @@ public partial class MainWindow : IDisposable
         {
             var errorMessage = $"Error opening URL: {url}. Exception: {ex.Message}";
             LogMessage(errorMessage);
-            _ = App.BugReportServiceInstance?.SendBugReportAsync(errorMessage);
+            _ = ReportBugAsync(errorMessage, ex);
             ShowMessageBox($"Unable to open link: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -2291,6 +2312,7 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Error handling dropped files: {ex.Message}");
             ShowError($"Error processing dropped files: {ex.Message}");
+            _ = ReportBugAsync("Error handling dropped files", ex);
         }
     }
 
@@ -2406,6 +2428,7 @@ public partial class MainWindow : IDisposable
         {
             LogMessage($"Error adding individual files: {ex.Message}");
             ShowError($"Error adding files: {ex.Message}");
+            _ = ReportBugAsync("Error adding individual files to list", ex);
         }
     }
 

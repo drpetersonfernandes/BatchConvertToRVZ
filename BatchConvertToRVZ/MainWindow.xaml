@@ -171,7 +171,7 @@
                                 </GroupBox>
                             </Grid>
 
-                            <Label Grid.Row="3" Content="Select Files to Convert:" Margin="0,5,0,0" FontWeight="Bold" />
+                            <Label Grid.Row="3" Content="Select Files to Convert:" Margin="0,5,0,0" FontWeight="Bold" ToolTip="List of files to convert. Check a file to include it in the batch." />
                             <Grid Grid.Row="4" Margin="0,5" VerticalAlignment="Stretch">
                                 <DataGrid x:Name="ConversionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader"
                                           AllowDrop="True" Drop="ConversionFilesDataGrid_Drop" DragOver="ConversionFilesDataGrid_DragOver" ToolTip="Drag and drop ISO, GCM, WBFS, GCZ, WIA, NKIT.ISO, ZIP, 7Z, or RAR files here">
@@ -183,8 +183,8 @@
                                 </DataGrid>
                             </Grid>
                             <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,10">
-                                <Button Content="Select All" Click="SelectAllConversion_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
-                                <Button Content="Deselect All" Click="DeselectAllConversion_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
+                                <Button Content="Select All" Click="SelectAllConversion_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" ToolTip="Select all files for conversion" />
+                                <Button Content="Deselect All" Click="DeselectAllConversion_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" ToolTip="Deselect all files from conversion" />
                             </StackPanel>
 
                             <Button Grid.Row="6" x:Name="StartConversionButton" Content="Start Conversion" Click="StartConversionButton_Click" Style="{StaticResource StartButtonStyle}" HorizontalAlignment="Stretch" ToolTip="Begin the batch conversion process" />
@@ -223,7 +223,7 @@
                                 </StackPanel>
                             </GroupBox>
 
-                            <Label Grid.Row="2" Content="Select Files to Verify:" Margin="0,5,0,0" FontWeight="Bold" />
+                            <Label Grid.Row="2" Content="Select Files to Verify:" Margin="0,5,0,0" FontWeight="Bold" ToolTip="List of RVZ files to verify. Check a file to include it in the batch." />
                             <Grid Grid.Row="3" Margin="0,5" VerticalAlignment="Stretch">
                                 <DataGrid x:Name="VerificationFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader"
                                           AllowDrop="True" Drop="VerificationFilesDataGrid_Drop" DragOver="VerificationFilesDataGrid_DragOver" ToolTip="Drag and drop RVZ files here">
@@ -235,8 +235,8 @@
                                 </DataGrid>
                             </Grid>
                             <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,10">
-                                <Button Content="Select All" Click="SelectAllVerification_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
-                                <Button Content="Deselect All" Click="DeselectAllVerification_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
+                                <Button Content="Select All" Click="SelectAllVerification_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" ToolTip="Select all files for verification" />
+                                <Button Content="Deselect All" Click="DeselectAllVerification_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" ToolTip="Deselect all files from verification" />
                             </StackPanel>
 
                             <Button Grid.Row="5" x:Name="StartVerifyButton" Content="Start Verification" Click="StartVerifyButton_Click" Style="{StaticResource StartButtonStyle}" HorizontalAlignment="Stretch" ToolTip="Begin the verification process" />
@@ -285,7 +285,7 @@
                                 <StackPanel>
                                     <CheckBox x:Name="DeleteExtractedFilesCheckBox" Content="Delete original RVZ files after extraction" Margin="0,5" HorizontalAlignment="Left" ToolTip="WARNING: Permanently deletes source RVZ files after successful extraction. Use with caution!" />
                                     <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                                        <Label Content="Output Format:" VerticalAlignment="Center" />
+                                        <Label Content="Output Format:" VerticalAlignment="Center" ToolTip="The target file format for extracted files" />
                                         <ComboBox x:Name="ExtractOutputFormatComboBox" Width="120" Margin="5,0,0,0" SelectedIndex="0" ToolTip="Select the output format for extracted files">
                                             <ComboBoxItem Content="ISO" />
                                             <ComboBoxItem Content="WBFS" />
@@ -296,7 +296,7 @@
                                 </StackPanel>
                             </GroupBox>
 
-                            <Label Grid.Row="3" Content="Select Files to Extract:" Margin="0,5,0,0" FontWeight="Bold" />
+                            <Label Grid.Row="3" Content="Select Files to Extract:" Margin="0,5,0,0" FontWeight="Bold" ToolTip="List of files to extract. Check a file to include it in the batch." />
                             <Grid Grid.Row="4" Margin="0,5" VerticalAlignment="Stretch">
                                 <DataGrid x:Name="ExtractionFilesDataGrid" AutoGenerateColumns="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" SelectionMode="Single" SelectionUnit="CellOrRowHeader"
                                           AllowDrop="True" Drop="ExtractionFilesDataGrid_Drop" DragOver="ExtractionFilesDataGrid_DragOver" ToolTip="Drag and drop RVZ, ZIP, 7Z, or RAR files here">
@@ -308,8 +308,8 @@
                                 </DataGrid>
                             </Grid>
                             <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,10">
-                                <Button Content="Select All" Click="SelectAllExtraction_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
-                                <Button Content="Deselect All" Click="DeselectAllExtraction_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" />
+                                <Button Content="Select All" Click="SelectAllExtraction_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" ToolTip="Select all files for extraction" />
+                                <Button Content="Deselect All" Click="DeselectAllExtraction_Click" Style="{StaticResource ActionButtonStyle}" Margin="5,0" ToolTip="Deselect all files from extraction" />
                             </StackPanel>
 
                             <Button Grid.Row="6" x:Name="StartExtractionButton" Content="Start Extraction" Click="StartExtractionButton_Click" Style="{StaticResource StartButtonStyle}" HorizontalAlignment="Stretch" ToolTip="Begin the batch extraction process" />
@@ -345,36 +345,36 @@
 
                 <Border Grid.Column="0" Style="{StaticResource StatCard}" ToolTip="Total number of files">
                     <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                        <TextBlock Text="TOTAL FILES" FontSize="10" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="Bold" HorizontalAlignment="Center" />
-                        <TextBlock x:Name="TotalFilesValue" Text="0" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock Text="TOTAL FILES" FontSize="10" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="Bold" HorizontalAlignment="Center" ToolTip="Total number of files processed" />
+                        <TextBlock x:Name="TotalFilesValue" Text="0" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{StaticResource TextPrimaryBrush}" ToolTip="Total number of files processed" />
                     </StackPanel>
                 </Border>
 
                 <Border Grid.Column="1" Style="{StaticResource StatCard}" ToolTip="Successfully processed files">
                     <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                        <TextBlock Text="SUCCESS" FontSize="10" Foreground="{StaticResource SuccessTextBrush}" FontWeight="Bold" HorizontalAlignment="Center" />
-                        <TextBlock x:Name="SuccessValue" Text="0" FontSize="18" FontWeight="Bold" Foreground="{StaticResource SuccessTextBrush}" HorizontalAlignment="Center" />
+                        <TextBlock Text="SUCCESS" FontSize="10" Foreground="{StaticResource SuccessTextBrush}" FontWeight="Bold" HorizontalAlignment="Center" ToolTip="Number of files successfully processed" />
+                        <TextBlock x:Name="SuccessValue" Text="0" FontSize="18" FontWeight="Bold" Foreground="{StaticResource SuccessTextBrush}" HorizontalAlignment="Center" ToolTip="Number of files successfully processed" />
                     </StackPanel>
                 </Border>
 
                 <Border Grid.Column="2" Style="{StaticResource StatCard}" ToolTip="Failed files">
                     <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                        <TextBlock Text="FAILED" FontSize="10" Foreground="{StaticResource FailedTextBrush}" FontWeight="Bold" HorizontalAlignment="Center" />
-                        <TextBlock x:Name="FailedValue" Text="0" FontSize="18" FontWeight="Bold" Foreground="{StaticResource FailedTextBrush}" HorizontalAlignment="Center" />
+                        <TextBlock Text="FAILED" FontSize="10" Foreground="{StaticResource FailedTextBrush}" FontWeight="Bold" HorizontalAlignment="Center" ToolTip="Number of files that failed processing" />
+                        <TextBlock x:Name="FailedValue" Text="0" FontSize="18" FontWeight="Bold" Foreground="{StaticResource FailedTextBrush}" HorizontalAlignment="Center" ToolTip="Number of files that failed processing" />
                     </StackPanel>
                 </Border>
 
                 <Border Grid.Column="3" Style="{StaticResource StatCard}" ToolTip="Time elapsed">
                     <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                        <TextBlock Text="ELAPSED" FontSize="10" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="Bold" HorizontalAlignment="Center" />
-                        <TextBlock x:Name="ProcessingTimeValue" Text="00:00:00" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock Text="ELAPSED" FontSize="10" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="Bold" HorizontalAlignment="Center" ToolTip="Total elapsed processing time" />
+                        <TextBlock x:Name="ProcessingTimeValue" Text="00:00:00" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{StaticResource TextPrimaryBrush}" ToolTip="Total elapsed processing time" />
                     </StackPanel>
                 </Border>
 
                 <Border Grid.Column="4" Style="{StaticResource StatCard}" ToolTip="Current processing speed">
                     <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                        <TextBlock Text="SPEED" FontSize="10" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="Bold" HorizontalAlignment="Center" />
-                        <TextBlock x:Name="WriteSpeedValue" Text="0.0 MB/s" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock Text="SPEED" FontSize="10" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="Bold" HorizontalAlignment="Center" ToolTip="Average processing speed" />
+                        <TextBlock x:Name="WriteSpeedValue" Text="0.0 MB/s" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{StaticResource TextPrimaryBrush}" ToolTip="Average processing speed" />
                     </StackPanel>
                 </Border>
             </Grid>
@@ -424,14 +424,16 @@
                                FontWeight="Bold"
                                Foreground="{StaticResource HeaderTextBrush}"
                                HorizontalAlignment="Center"
-                               Margin="0,0,0,10" />
+                               Margin="0,0,0,10"
+                               ToolTip="Extraction is in progress, please wait" />
                     <TextBlock x:Name="ExtractionOverlayText"
                                Text="Extracting archive..."
                                FontSize="14"
                                Foreground="{StaticResource TextPrimaryBrush}"
                                HorizontalAlignment="Center"
                                TextWrapping="Wrap"
-                               MaxWidth="400" />
+                               MaxWidth="400"
+                               ToolTip="Current extraction progress status" />
                 </StackPanel>
             </Border>
         </Grid>

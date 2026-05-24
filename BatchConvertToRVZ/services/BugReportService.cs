@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -50,21 +51,14 @@ public class BugReportService : IDisposable
     {
         try
         {
-            // Get system information
             var systemInfo = GetSystemInfo(message);
-
-            // Create the request payload using the SystemInfo model for type safety
-            var content = JsonContent.Create(systemInfo);
-
-            // Send the request
+            var payload = BuildApiPayload(message, null, systemInfo);
+            var content = JsonContent.Create(payload);
             var response = await _httpClient.PostAsync(_apiUrl, content);
-
-            // Return true if successful
             return response.IsSuccessStatusCode;
         }
         catch
         {
-            // Silently fail if there's an exception
             return false;
         }
     }
@@ -79,21 +73,14 @@ public class BugReportService : IDisposable
     {
         try
         {
-            // Get system information with exception details
             var systemInfo = GetSystemInfo(message, exception);
-
-            // Create the request payload using the SystemInfo model for type safety
-            var content = JsonContent.Create(systemInfo);
-
-            // Send the request
+            var payload = BuildApiPayload(message, exception, systemInfo);
+            var content = JsonContent.Create(payload);
             var response = await _httpClient.PostAsync(_apiUrl, content);
-
-            // Return true if successful
             return response.IsSuccessStatusCode;
         }
         catch
         {
-            // Silently fail if there's an exception
             return false;
         }
     }
@@ -113,15 +100,15 @@ public class BugReportService : IDisposable
         while (currentException != null)
         {
             var indent = new string(' ', level * 2);
-            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}Type: {currentException.GetType().FullName}");
-            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}Message: {currentException.Message}");
-            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}Source: {currentException.Source}");
-            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}StackTrace:");
-            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}{currentException.StackTrace}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Type: {currentException.GetType().FullName}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Message: {currentException.Message}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Source: {currentException.Source}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}StackTrace:");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}{currentException.StackTrace}");
 
             if (currentException.InnerException != null)
             {
-                sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"{indent}Inner Exception:");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"{indent}Inner Exception:");
                 currentException = currentException.InnerException;
                 level++;
             }
@@ -145,6 +132,78 @@ public class BugReportService : IDisposable
     }
 
     /// <summary>
+    /// Builds the API-compatible payload matching the BugReportRequest schema expected by the API.
+    /// Packs all environment and exception details into the message field since the API only
+    /// recognizes: message, applicationName, version, userInfo, environment, stackTrace.
+    /// </summary>
+    private object BuildApiPayload(string message, Exception? exception, SystemInfo systemInfo)
+    {
+        return new
+        {
+            message = BuildBugReportMessage(message, exception, systemInfo),
+            applicationName = _applicationName,
+            version = _applicationVersion,
+            environment = GetEnvironmentShort(systemInfo),
+            stackTrace = TruncateString(exception?.StackTrace ?? "", 8000)
+        };
+    }
+
+    /// <summary>
+    /// Builds the complete bug report message with environment details, error details,
+    /// and exception details in separate sections.
+    /// </summary>
+    private static string BuildBugReportMessage(string message, Exception? exception, SystemInfo systemInfo)
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("=== Environment Details ===");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Date: {systemInfo.Date}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Application Name: {systemInfo.ApplicationName}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Application Version: {systemInfo.ApplicationVersion}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"OS Version: {systemInfo.OsVersion}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Architecture: {systemInfo.Architecture}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Bitness: {systemInfo.Bitness}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Windows Version: {systemInfo.WindowsVersion}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Processor Count: {systemInfo.ProcessorCount}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Base Directory: {systemInfo.BaseDirectory}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Temp Path: {systemInfo.TempPath}");
+
+        sb.AppendLine();
+        sb.AppendLine("=== Error Details ===");
+        sb.AppendLine(message);
+
+        if (exception != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine("=== Exception Details ===");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"Type: {exception.GetType().FullName}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"Message: {exception.Message}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"Source: {exception.Source ?? "Unknown"}");
+        }
+
+        return TruncateString(sb.ToString(), 4000);
+    }
+
+    /// <summary>
+    /// Returns a short environment summary for the API's environment field (max 50 chars).
+    /// </summary>
+    private static string GetEnvironmentShort(SystemInfo systemInfo)
+    {
+        return TruncateString($"{systemInfo.WindowsVersion} {systemInfo.Bitness}", 50);
+    }
+
+    /// <summary>
+    /// Truncates a string to the specified maximum length, appending "..." if truncated.
+    /// </summary>
+    private static string TruncateString(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+            return value;
+
+        return value[..(maxLength - 3)] + "...";
+    }
+
+    /// <summary>
     /// Gets system information for the bug report
     /// </summary>
     /// <param name="message">The error message or bug report</param>
@@ -153,8 +212,7 @@ public class BugReportService : IDisposable
     {
         var systemInfo = new SystemInfo
         {
-            // === Environment Details ===
-            Date = DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
+            Date = DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss", CultureInfo.InvariantCulture),
             ApplicationName = _applicationName,
             ApplicationVersion = _applicationVersion,
             OsVersion = Environment.OSVersion.ToString(),
@@ -164,12 +222,9 @@ public class BugReportService : IDisposable
             ProcessorCount = Environment.ProcessorCount,
             BaseDirectory = AppDomain.CurrentDomain.BaseDirectory,
             TempPath = Path.GetTempPath(),
-
-            // === Error Details ===
             Message = message
         };
 
-        // === Exception Details ===
         if (exception != null)
         {
             systemInfo.ExceptionType = exception.GetType().FullName ?? "Unknown";
