@@ -7,7 +7,6 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <UseWPF>true</UseWPF>
         <ApplicationIcon>icon\icon.ico</ApplicationIcon>
-
         <AssemblyVersion>2.2.0</AssemblyVersion>
         <FileVersion>2.2.0</FileVersion>
         <IsPackable>false</IsPackable>
@@ -25,31 +24,20 @@
         <Resource Include="images\exit.png" />
         <Resource Include="images\logo.png" />
         <Resource Include="images\update.png" />
-        <None Update="DolphinTool_arm64.exe">
-            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-        </None>
     </ItemGroup>
 
     <ItemGroup>
-        <None Update="DolphinTool.exe">
-            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-        </None>
+        <PackageReference Include="SharpCompress" Version="0.49.0" />
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="SharpCompress" Version="0.48.1" />
+      <None Update="DolphinTool.exe">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
+      <None Update="DolphinTool_arm64.exe">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
     </ItemGroup>
 
-    <ItemGroup>
-        <None Remove="References\**" />
-    </ItemGroup>
-
-    <ItemGroup>
-        <Compile Remove="References\**" />
-    </ItemGroup>
-
-    <ItemGroup>
-        <Page Remove="References\**" />
-    </ItemGroup>
 
 </Project>
