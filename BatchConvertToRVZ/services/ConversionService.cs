@@ -521,6 +521,10 @@ public class ConversionService
 
             return (true, extractedFilePath, tempDir, string.Empty, isRvzFile);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             var archiveName = Path.GetFileName(archivePath);

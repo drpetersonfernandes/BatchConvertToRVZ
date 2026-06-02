@@ -284,6 +284,10 @@ public class ExtractionService
             _logMessage($"Extracted {entryName} from archive.");
             return (true, extractedFilePath, tempDir, string.Empty);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             var archiveName = Path.GetFileName(archivePath);
