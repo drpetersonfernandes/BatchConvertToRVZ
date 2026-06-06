@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Channels;
 using SharpCompress.Archives;
@@ -521,15 +522,145 @@ public class ConversionService
 
             return (true, extractedFilePath, tempDir, string.Empty, isRvzFile);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Real user cancellation - propagate
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // SharpCompress internal failure (not user cancellation) - try 7za.exe fallback
+            var archiveName = Path.GetFileName(archivePath);
+
+            if (ex is OperationCanceledException)
+            {
+                _logMessage($"SharpCompress extraction failed for {archiveName} (internal cancellation), falling back to 7za.exe...");
+            }
+            else
+            {
+                _logMessage($"SharpCompress extraction failed for {archiveName}: {ex.Message}, falling back to 7za.exe...");
+            }
+
+            // Clean up SharpCompress temp dir
+            if (!string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
+            {
+                try
+                {
+                    Directory.Delete(tempDir, true);
+                }
+                catch
+                {
+                    // Ignore cleanup errors
+                }
+            }
+
+            // Try 7za.exe fallback
+            var sevenZipResult = await ExtractWith7ZipAsync(archivePath, cancellationToken);
+            if (sevenZipResult.Success)
+            {
+                return sevenZipResult;
+            }
+
+            // Both SharpCompress and 7za.exe failed - report as corrupt
+            _logMessage($"Extraction failed with both SharpCompress and 7za.exe for {archiveName}. File may be corrupt.");
+            await _reportBugAsync($"Error extracting archive: {archiveName}", ex);
+
+            return (false, string.Empty, string.Empty, $"Failed to extract archive (file may be corrupt): {archiveName}", false);
+        }
+    }
+
+    private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage, bool IsRvzFile)> ExtractWith7ZipAsync(string archivePath, CancellationToken cancellationToken)
+    {
+        var tempDir = string.Empty;
+
+        try
+        {
+            tempDir = Path.Combine(Path.GetTempPath(), "BatchConvertToRVZ_7Zip_" + Path.GetRandomFileName());
+            Directory.CreateDirectory(tempDir);
+
+            var sevenZipPath = Get7ZipExecutablePath();
+            if (!File.Exists(sevenZipPath))
+            {
+                _logMessage($"7za executable not found at: {sevenZipPath}");
+                return (false, string.Empty, string.Empty, "7za executable not found.", false);
+            }
+
+            _logMessage($"Extracting with 7za.exe to: {tempDir}");
+
+            using var process = new Process();
+            process.StartInfo = new ProcessStartInfo
+            {
+                FileName = sevenZipPath,
+                Arguments = $"x -o\"{tempDir}\" -y \"{archivePath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+
+            process.OutputDataReceived += (_, args) =>
+            {
+                if (args.Data is not null) outputBuilder.AppendLine(args.Data);
+            };
+            process.ErrorDataReceived += (_, args) =>
+            {
+                if (args.Data is not null) errorBuilder.AppendLine(args.Data);
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            await process.WaitForExitAsync(cancellationToken);
+
+            if (process.ExitCode != 0)
+            {
+                var errorOutput = errorBuilder.ToString();
+                _logMessage($"7za.exe extraction failed with exit code {process.ExitCode}: {errorOutput}");
+                return (false, string.Empty, string.Empty, $"7za.exe extraction failed: {errorOutput}", false);
+            }
+
+            // Find the extracted disc image
+            var supportedExtensions = _fileService.GetPrimaryTargetExtensionsInsideArchive();
+            var rvzExtensions = _fileService.GetRvzExtensions();
+
+            var extractedFile = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories)
+                .FirstOrDefault(f =>
+                {
+                    var ext = Path.GetExtension(f).ToLowerInvariant();
+                    return supportedExtensions.Contains(ext) || rvzExtensions.Contains(ext);
+                });
+
+            if (extractedFile is null)
+            {
+                _logMessage("No supported disc image found in 7za.exe extraction output.");
+                return (false, string.Empty, string.Empty, "No supported disc image found after 7za.exe extraction.", false);
+            }
+
+            var isRvzFile = rvzExtensions.Contains(Path.GetExtension(extractedFile).ToLowerInvariant());
+            var entryName = Path.GetFileName(extractedFile);
+
+            if (isRvzFile)
+            {
+                _logMessage($"Extracted RVZ file {entryName} from archive using 7za.exe.");
+            }
+            else
+            {
+                _logMessage($"Extracted {entryName} from archive using 7za.exe.");
+            }
+
+            return (true, extractedFile, tempDir, string.Empty, isRvzFile);
+        }
         catch (OperationCanceledException)
         {
             throw;
         }
         catch (Exception ex)
         {
-            var archiveName = Path.GetFileName(archivePath);
-            _logMessage($"Error extracting archive {archiveName}: {ex.Message}");
-            await _reportBugAsync($"Error extracting archive: {archiveName}", ex);
+            _logMessage($"7za.exe extraction error: {ex.Message}");
 
             // Clean up on failure
             if (!string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
@@ -544,8 +675,20 @@ public class ConversionService
                 }
             }
 
-            return (false, string.Empty, string.Empty, $"Failed to extract archive: {ex.Message}", false);
+            return (false, string.Empty, string.Empty, $"7za.exe extraction error: {ex.Message}", false);
         }
+    }
+
+    private static string Get7ZipExecutablePath()
+    {
+        var architecture = RuntimeInformation.ProcessArchitecture;
+        var exeName = architecture switch
+        {
+            Architecture.Arm64 => "7za_arm64.exe",
+            _ => "7za.exe"
+        };
+
+        return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, exeName);
     }
 
     private Task<bool> TryDeleteFileAsync(string filePath, string description)
