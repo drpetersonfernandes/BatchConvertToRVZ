@@ -679,7 +679,7 @@ public class ConversionService
         }
     }
 
-    private static string Get7ZipExecutablePath()
+    internal static string Get7ZipExecutablePath()
     {
         var architecture = RuntimeInformation.ProcessArchitecture;
         var exeName = architecture switch
