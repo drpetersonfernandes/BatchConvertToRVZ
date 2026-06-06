@@ -452,6 +452,23 @@ public class ConversionService
             if (!process.HasExited) process.Kill(true);
             throw;
         }
+        catch (Exception ex)
+        {
+            if (!process.HasExited)
+            {
+                try
+                {
+                    process.Kill(true);
+                }
+                catch
+                {
+                    /* ignore */
+                }
+            }
+
+            _logMessage($"DolphinTool process error: {ex.Message}");
+            return false;
+        }
     }
 
     private async Task<(bool Success, string FilePath, string TempDir, string ErrorMessage, bool IsRvzFile)> ExtractArchiveAsync(string archivePath, CancellationToken cancellationToken)
