@@ -247,17 +247,6 @@ public partial class MainWindow : IDisposable
             var errorMessage = $"The following critical file(s) are missing: {missingFilesString}.\n\nThe application cannot function without them. Please ensure all files from the release archive are in the same folder as this application.";
             LogMessage($"WARNING: {errorMessage.ReplaceLineEndings(" ")}");
             ShowError(errorMessage);
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await ReportBugAsync($"Missing critical files: {missingFilesString}");
-                }
-                catch
-                {
-                    /* Silently ignore */
-                }
-            });
         }
         else
         {
@@ -1903,6 +1892,13 @@ public partial class MainWindow : IDisposable
         {
             _extractionFiles.Clear();
 
+            if (!Directory.Exists(inputFolder))
+            {
+                LogMessage($"Directory not found: {inputFolder}");
+                ExtractionFilesDataGrid.ItemsSource = _extractionFiles;
+                return;
+            }
+
             var files = Directory.GetFiles(inputFolder, "*.*", SearchOption.TopDirectoryOnly)
                 .Where(file => _fileService.IsRvzFile(file))
                 .ToArray();
@@ -1925,17 +1921,6 @@ public partial class MainWindow : IDisposable
         catch (Exception ex)
         {
             LogMessage($"Error populating extraction file list: {ex.Message}");
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await ReportBugAsync("Error populating extraction file list", ex);
-                }
-                catch
-                {
-                    /* Silently ignore */
-                }
-            });
         }
     }
 
