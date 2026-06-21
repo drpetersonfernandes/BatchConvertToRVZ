@@ -6,3 +6,4 @@ riderModule.iml
 .idea/
 /BatchConvertToRVZ/References/
 *.DotSettings.user
+/bugs.md
